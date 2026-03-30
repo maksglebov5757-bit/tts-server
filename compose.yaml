@@ -1,0 +1,25 @@
+services:
+  api-linux-torch:
+    profiles:
+      - dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qwen3-tts-api-linux-torch:dev
+    ports:
+      - "8000:8000"
+    environment:
+      QWEN_TTS_BACKEND: torch
+      QWEN_TTS_BACKEND_AUTOSELECT: "true"
+      QWEN_TTS_HOST: 0.0.0.0
+      QWEN_TTS_PORT: "8000"
+      QWEN_TTS_MODELS_DIR: /app/.models
+      QWEN_TTS_OUTPUTS_DIR: /app/.outputs
+      QWEN_TTS_VOICES_DIR: /app/.voices
+      QWEN_TTS_UPLOAD_STAGING_DIR: /app/.uploads
+    volumes:
+      - ./.models:/app/.models
+      - ./.outputs:/app/.outputs
+      - ./.uploads:/app/.uploads
+      - ./.voices:/app/.voices
+    restart: unless-stopped

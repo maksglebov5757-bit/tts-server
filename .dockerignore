@@ -1,0 +1,51 @@
+# Git and editor metadata
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.venv311/
+venv/
+env/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local runtime artifacts and downloaded models
+.models/
+.outputs/
+.uploads/
+.voices/
+speech.wav
+custom.wav
+design.wav
+clone.wav
+tmp/
+tmp_*/
+tmp_stage3_debug/
+*.log
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+htmlcov/
+.coverage
+
+# Tests and documentation are not required in the runtime image
+tests/
+docs/
+README.md
+README.ru.md
