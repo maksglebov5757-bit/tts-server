@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 
 from core.infrastructure.audio_io import check_ffmpeg_available
 from core.observability import log_event, operation_scope
+from server.api.policies import enforce_control_plane_admission
 from server.schemas.audio import HealthResponse
 
 
@@ -16,6 +17,7 @@ def register_health_routes(app: FastAPI, logger) -> None:
     @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
     async def health_ready(request: Request) -> HealthResponse:
         with operation_scope("server.health_ready"):
+            await enforce_control_plane_admission(request)
             readiness = build_readiness_report(request)
             log_event(
                 logger,
@@ -25,6 +27,8 @@ def register_health_routes(app: FastAPI, logger) -> None:
                 status=readiness.status,
                 available_models=readiness.checks["models"]["available_models"],
                 runtime_ready_models=readiness.checks["models"]["runtime_ready_models"],
+                loaded_models=readiness.checks["models"]["loaded_models"],
+                preload_status=readiness.checks["models"]["preload"]["status"],
                 ffmpeg_available=readiness.checks["ffmpeg"]["available"],
             )
             return readiness
@@ -44,6 +48,8 @@ def build_readiness_report(request: Request) -> HealthResponse:
         "voices_dir_exists": settings.voices_dir.exists(),
         "sample_rate": settings.sample_rate,
         "max_upload_size_bytes": settings.max_upload_size_bytes,
+        "model_preload_policy": settings.model_preload_policy,
+        "model_preload_ids": list(settings.model_preload_ids),
     }
     runtime = {
         "inference_busy": request.app.state.runtime.inference_guard.is_busy(),
@@ -52,6 +58,7 @@ def build_readiness_report(request: Request) -> HealthResponse:
         "request_timeout_seconds": settings.request_timeout_seconds,
         "configured_backend": settings.backend,
         "backend_autoselect": settings.backend_autoselect,
+        "metrics": request.app.state.metrics.readiness_summary(),
     }
     status = "ok" if registry_report["registry_ready"] and ffmpeg_ready and config["models_dir_exists"] else "degraded"
     return HealthResponse(

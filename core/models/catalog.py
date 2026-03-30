@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from types import MappingProxyType
+
+from core.models.manifest import DEFAULT_MODEL_MANIFEST_PATH, ModelManifest, ModelSpec, load_model_manifest
 
 
 SPEAKER_MAP = {
@@ -17,60 +19,25 @@ EMOTION_EXAMPLES = [
     "Whispering quietly",
 ]
 
-@dataclass(frozen=True)
-class ModelSpec:
-    key: str
-    public_name: str
-    folder: str
-    mode: str
-    output_subfolder: str
 
-    @property
-    def api_name(self) -> str:
-        return self.folder
+def get_model_manifest(path=DEFAULT_MODEL_MANIFEST_PATH) -> ModelManifest:
+    return load_model_manifest(path)
 
 
-MODEL_SPECS = {
-    "1": ModelSpec(
-        key="1",
-        public_name="Custom Voice",
-        folder="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
-        mode="custom",
-        output_subfolder="CustomVoice",
-    ),
-    "2": ModelSpec(
-        key="2",
-        public_name="Voice Design",
-        folder="Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
-        mode="design",
-        output_subfolder="VoiceDesign",
-    ),
-    "3": ModelSpec(
-        key="3",
-        public_name="Voice Cloning",
-        folder="Qwen3-TTS-12Hz-1.7B-Base-8bit",
-        mode="clone",
-        output_subfolder="Clones",
-    ),
-    "4": ModelSpec(
-        key="4",
-        public_name="Custom Voice",
-        folder="Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
-        mode="custom",
-        output_subfolder="CustomVoice",
-    ),
-    "5": ModelSpec(
-        key="5",
-        public_name="Voice Design",
-        folder="Qwen3-TTS-12Hz-0.6B-VoiceDesign-8bit",
-        mode="design",
-        output_subfolder="VoiceDesign",
-    ),
-    "6": ModelSpec(
-        key="6",
-        public_name="Voice Cloning",
-        folder="Qwen3-TTS-12Hz-0.6B-Base-8bit",
-        mode="clone",
-        output_subfolder="Clones",
-    ),
-}
+def get_model_specs() -> dict[str, ModelSpec]:
+    return dict(get_model_manifest().models)
+
+
+MODEL_SPECS = MappingProxyType(get_model_specs())
+
+
+__all__ = [
+    "DEFAULT_MODEL_MANIFEST_PATH",
+    "EMOTION_EXAMPLES",
+    "MODEL_SPECS",
+    "ModelManifest",
+    "ModelSpec",
+    "SPEAKER_MAP",
+    "get_model_manifest",
+    "get_model_specs",
+]

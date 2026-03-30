@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "metadata": {
+    "catalog": "qwen3_tts_models",
+    "default_selection_policy": "mode_first_available"
+  },
+  "modes": [
+    {
+      "id": "custom",
+      "label": "Custom Voice",
+      "semantics": "Instruction-guided synthesis with predefined speakers"
+    },
+    {
+      "id": "design",
+      "label": "Voice Design",
+      "semantics": "Generate speech from free-form voice description"
+    },
+    {
+      "id": "clone",
+      "label": "Voice Cloning",
+      "semantics": "Clone a target voice from reference audio"
+    }
+  ],
+  "models": [
+    {
+      "key": "1",
+      "public_name": "Custom Voice",
+      "folder": "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+      "mode": "custom",
+      "output_subfolder": "CustomVoice",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "1.7B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "custom",
+        "label": "Custom Voice",
+        "semantics": "Instruction-guided synthesis with predefined speakers"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 100
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    },
+    {
+      "key": "2",
+      "public_name": "Voice Design",
+      "folder": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
+      "mode": "design",
+      "output_subfolder": "VoiceDesign",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "1.7B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "design",
+        "label": "Voice Design",
+        "semantics": "Generate speech from free-form voice description"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 100
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    },
+    {
+      "key": "3",
+      "public_name": "Voice Cloning",
+      "folder": "Qwen3-TTS-12Hz-1.7B-Base-8bit",
+      "mode": "clone",
+      "output_subfolder": "Clones",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "1.7B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "clone",
+        "label": "Voice Cloning",
+        "semantics": "Clone a target voice from reference audio"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 100
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    },
+    {
+      "key": "4",
+      "public_name": "Custom Voice",
+      "folder": "Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+      "mode": "custom",
+      "output_subfolder": "CustomVoice",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "0.6B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "custom",
+        "label": "Custom Voice",
+        "semantics": "Instruction-guided synthesis with predefined speakers"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 50
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    },
+    {
+      "key": "5",
+      "public_name": "Voice Design",
+      "folder": "Qwen3-TTS-12Hz-0.6B-VoiceDesign-8bit",
+      "mode": "design",
+      "output_subfolder": "VoiceDesign",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "0.6B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "design",
+        "label": "Voice Design",
+        "semantics": "Generate speech from free-form voice description"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 50
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    },
+    {
+      "key": "6",
+      "public_name": "Voice Cloning",
+      "folder": "Qwen3-TTS-12Hz-0.6B-Base-8bit",
+      "mode": "clone",
+      "output_subfolder": "Clones",
+      "metadata": {
+        "family": "Qwen3-TTS",
+        "variant": "0.6B",
+        "quantization": "8bit"
+      },
+      "mode_metadata": {
+        "id": "clone",
+        "label": "Voice Cloning",
+        "semantics": "Clone a target voice from reference audio"
+      },
+      "backend_affinity": ["mlx", "torch"],
+      "rollout": {
+        "enabled": true,
+        "stage": "general",
+        "default_preference": 50
+      },
+      "artifact_validation": {
+        "mlx": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        },
+        "torch": {
+          "required_rules": [
+            {"name": "config", "any_of": ["config.json"]},
+            {"name": "weights", "any_of": ["model.safetensors", "model.safetensors.index.json"]},
+            {"name": "preprocessor", "any_of": ["preprocessor_config.json"]},
+            {"name": "tokenizer", "any_of": ["tokenizer_config.json", "vocab.json"]}
+          ]
+        }
+      }
+    }
+  ]
+}

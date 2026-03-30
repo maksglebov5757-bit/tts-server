@@ -12,6 +12,7 @@
 - Углублённые readiness/liveness probes с диагностикой модели, runtime и конфигурации
 - Структурированные логи запросов и сервиса с трассировкой запросов
 - Необязательное сохранение выходных файлов в [`.outputs/`](.outputs)
+- Изолированная временная staging-зона в [`.uploads/`](.uploads) для clone-запросов
 - Многоуровневый набор тестов, разделённый на unit, integration, smoke и architecture
 
 ## Требования
@@ -83,15 +84,17 @@ python -m uvicorn server:app --host 0.0.0.0 --port 8000
 - `QWEN_TTS_MODELS_DIR`
 - `QWEN_TTS_OUTPUTS_DIR`
 - `QWEN_TTS_VOICES_DIR`
+- `QWEN_TTS_UPLOAD_STAGING_DIR` — отдельная временная директория для загруженного reference audio перед clone-inference
 - `QWEN_TTS_BACKEND`
 - `QWEN_TTS_BACKEND_AUTOSELECT`
 - `QWEN_TTS_HOST`
 - `QWEN_TTS_PORT`
 - `QWEN_TTS_LOG_LEVEL`
 - `QWEN_TTS_DEFAULT_SAVE_OUTPUT`
-- `QWEN_TTS_ENABLE_STREAMING`
+- `QWEN_TTS_ENABLE_STREAMING` — флаг конфигурации сохранён, но уже материализованное аудио возвращается как обычный non-streaming HTTP body
 - `QWEN_TTS_MAX_UPLOAD_SIZE_BYTES`
-- `QWEN_TTS_REQUEST_TIMEOUT_SECONDS`
+- `QWEN_TTS_MAX_INPUT_TEXT_CHARS` — максимальная длина текста для JSON и form TTS-запросов; превышение лимита возвращает стандартный `validation_error`
+- `QWEN_TTS_REQUEST_TIMEOUT_SECONDS` — adapter-level timeout для inference execution; по превышению возвращается `request_timeout` с HTTP 504
 - `QWEN_TTS_INFERENCE_BUSY_STATUS_CODE`
 - `QWEN_TTS_SAMPLE_RATE`
 - `QWEN_TTS_FILENAME_MAX_LEN`
@@ -103,7 +106,10 @@ python -m uvicorn server:app --host 0.0.0.0 --port 8000
 export QWEN_TTS_BACKEND=torch
 export QWEN_TTS_BACKEND_AUTOSELECT=true
 export QWEN_TTS_DEFAULT_SAVE_OUTPUT=false
+export QWEN_TTS_UPLOAD_STAGING_DIR=.uploads
 export QWEN_TTS_MAX_UPLOAD_SIZE_BYTES=26214400
+export QWEN_TTS_MAX_INPUT_TEXT_CHARS=5000
+export QWEN_TTS_REQUEST_TIMEOUT_SECONDS=300
 python -m uvicorn server --host 0.0.0.0 --port 8000
 ```
 
@@ -126,6 +132,13 @@ python -m uvicorn server --host 0.0.0.0 --port 8000
 - `POST /api/v1/tts/custom`
 - `POST /api/v1/tts/design`
 - `POST /api/v1/tts/clone`
+
+### Эксплуатационные заметки
+
+- Аудио-ответы от `POST /v1/audio/speech` и расширенных TTS-эндпоинтов возвращаются как обычный HTTP body после завершения генерации. Сервер больше не использует псевдо-streaming для уже готового аудио только из-за включённого `QWEN_TTS_ENABLE_STREAMING`.
+- Inference в HTTP adapter выносится из event loop и ограничивается настройкой `QWEN_TTS_REQUEST_TIMEOUT_SECONDS`. При превышении таймаута API возвращает единый JSON error `request_timeout` с HTTP 504.
+- Upload-файлы для voice clone временно размещаются в `QWEN_TTS_UPLOAD_STAGING_DIR` и удаляются после завершения запроса. Временные upload-артефакты больше не пишутся в [`.outputs/`](.outputs).
+- Structured observability теперь публикует события жизненного цикла inference wrapper: start, worker start, completed, timeout и failed path в [`server/api/routes_tts.py`](server/api/routes_tts.py).
 
 ## Примеры запросов
 
@@ -193,3 +206,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/tts/clone \
   "request_id": "..."
 }
 ```
+
+Актуальная error semantics для эксплуатационных сценариев:
+
+- неизвестные model identifier и запросы mode, для которого нет соответствующей локальной модели, нормализуются в `model_not_available` с HTTP 404 через [`server/api/errors.py`](server/api/errors.py)
+- проблемы доступности backend остаются `backend_not_available` с HTTP 503
+- несовпадение backend capability остаётся `backend_capability_missing` с HTTP 422
+- запросы, превышающие `QWEN_TTS_MAX_INPUT_TEXT_CHARS`, возвращают стандартный `validation_error` с HTTP 422 как для JSON, так и для form-based TTS endpoints
+- inference-запросы, превышающие `QWEN_TTS_REQUEST_TIMEOUT_SECONDS`, возвращают `request_timeout` с HTTP 504

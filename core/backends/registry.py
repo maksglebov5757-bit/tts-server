@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from core.backends.base import TTSBackend
-from core.errors import BackendCapabilityError, BackendNotAvailableError
-from core.models.catalog import MODEL_SPECS, ModelSpec
+from core.errors import BackendCapabilityError, BackendNotAvailableError, ModelNotAvailableError
+from core.models.catalog import ModelSpec, get_model_manifest
 
 
 @dataclass(frozen=True)
@@ -18,12 +18,20 @@ class BackendSelection:
 
 
 class BackendRegistry:
-    def __init__(self, backends: Sequence[TTSBackend], *, requested_backend: str | None = None, autoselect: bool = True):
+    def __init__(
+        self,
+        backends: Sequence[TTSBackend],
+        *,
+        requested_backend: str | None = None,
+        autoselect: bool = True,
+        model_manifest_path=None,
+    ):
         if not backends:
             raise ValueError("At least one backend must be registered")
         self._backends = {backend.key: backend for backend in backends}
         self._requested_backend = requested_backend
         self._autoselect = autoselect
+        self._model_manifest = get_model_manifest(model_manifest_path) if model_manifest_path is not None else get_model_manifest()
         self._selection = self._select_backend()
 
     @property
@@ -33,6 +41,10 @@ class BackendRegistry:
     @property
     def selection(self) -> BackendSelection:
         return self._selection
+
+    @property
+    def model_specs(self) -> tuple[ModelSpec, ...]:
+        return tuple(self._model_manifest.enabled_models())
 
     def list_backends(self) -> list[dict[str, object]]:
         selected_key = self.selected_backend.key
@@ -51,31 +63,45 @@ class BackendRegistry:
 
     def get_model_spec(self, model_name: str | None = None, mode: str | None = None) -> ModelSpec:
         if model_name:
-            for spec in MODEL_SPECS.values():
+            for spec in self.model_specs:
                 if model_name in {spec.api_name, spec.folder, spec.key}:
-                    self.ensure_mode_supported(spec.mode)
+                    self.ensure_model_supported(spec)
                     return spec
-            raise BackendNotAvailableError(
-                f"Requested model is not available: {model_name}",
+            raise ModelNotAvailableError(
+                model_name=model_name,
                 details={"model": model_name, "backend": self.selected_backend.key},
             )
 
         if mode:
             self.ensure_mode_supported(mode)
-            for spec in MODEL_SPECS.values():
-                if spec.mode == mode and self.selected_backend.resolve_model_path(spec.folder):
+            matching_specs = [spec for spec in self.model_specs if spec.mode == mode and spec.enabled]
+            matching_specs.sort(key=lambda spec: spec.rollout.default_preference, reverse=True)
+            for spec in matching_specs:
+                if self.selected_backend.resolve_model_path(spec.folder):
+                    self.ensure_model_supported(spec)
                     return spec
-            for spec in MODEL_SPECS.values():
-                if spec.mode == mode:
-                    return spec
-            raise BackendNotAvailableError(
-                f"Requested mode is not available: {mode}",
+            if matching_specs:
+                raise ModelNotAvailableError(
+                    reason=f"No local model is available for mode: {mode}",
+                    details={"mode": mode, "backend": self.selected_backend.key},
+                )
+            raise ModelNotAvailableError(
+                reason=f"Requested mode is not available: {mode}",
                 details={"mode": mode, "backend": self.selected_backend.key},
             )
 
-        raise BackendNotAvailableError(
-            "No model or mode was specified",
+        raise ModelNotAvailableError(
+            reason="No model or mode was specified",
             details={"backend": self.selected_backend.key},
+        )
+
+    def ensure_model_supported(self, spec: ModelSpec) -> None:
+        self.ensure_mode_supported(spec.mode)
+        if spec.supports_backend(self.selected_backend.key):
+            return
+        raise BackendCapabilityError(
+            f"Backend '{self.selected_backend.key}' is not enabled for model '{spec.api_name}'",
+            details={"backend": self.selected_backend.key, "model": spec.api_name, "mode": spec.mode},
         )
 
     def ensure_mode_supported(self, mode: str) -> None:

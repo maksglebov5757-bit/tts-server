@@ -49,6 +49,39 @@ class TTSBackend(ABC):
     def readiness_diagnostics(self) -> BackendDiagnostics:
         raise NotImplementedError
 
+    def cache_diagnostics(self) -> dict[str, Any]:
+        return {
+            "cached_model_count": 0,
+            "cached_model_ids": [],
+            "cache_policy": {
+                "eviction": "not_configured",
+            },
+            "loaded_models": [],
+        }
+
+    def metrics_summary(self) -> dict[str, Any]:
+        return {
+            "cache": {
+                "hit": {},
+                "miss": {},
+            },
+            "load": {
+                "failures": {},
+                "duration_ms": {},
+            },
+        }
+
+    def preload_models(self, specs: tuple[ModelSpec, ...]) -> dict[str, Any]:
+        return {
+            "requested": 0,
+            "attempted": 0,
+            "loaded": 0,
+            "failed": 0,
+            "loaded_model_ids": [],
+            "failed_model_ids": [],
+            "errors": [],
+        }
+
     @abstractmethod
     def synthesize_custom(
         self,

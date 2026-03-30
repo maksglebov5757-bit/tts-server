@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import io
 import wave
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from core.contracts.results import GenerationResult
 from core.observability import log_event
@@ -26,7 +27,10 @@ def build_error_response(*, request: Request, descriptor: ErrorDescriptor) -> JS
         details=descriptor.details,
         request_id=getattr(request.state, "request_id", "unknown"),
     )
-    return JSONResponse(status_code=descriptor.status_code, content=payload.model_dump())
+    response = JSONResponse(status_code=descriptor.status_code, content=payload.model_dump())
+    for header_name, header_value in (descriptor.headers or {}).items():
+        response.headers[header_name] = header_value
+    return response
 
 
 
@@ -46,7 +50,7 @@ def build_audio_response(request: Request, result: GenerationResult, response_fo
         "x-backend-id": result.backend,
     }
     if result.saved_path:
-        headers["x-saved-output-path"] = str(result.saved_path)
+        headers["x-saved-output-file"] = public_artifact_name(result.saved_path)
 
     log_event(
         logger,
@@ -61,9 +65,12 @@ def build_audio_response(request: Request, result: GenerationResult, response_fo
         saved_path=str(result.saved_path) if result.saved_path else None,
     )
 
-    if request.app.state.settings.enable_streaming:
-        return StreamingResponse(io.BytesIO(audio_bytes), media_type=media_type, headers=headers)
     return Response(content=audio_bytes, media_type=media_type, headers=headers)
+
+
+
+def public_artifact_name(path: str | Path) -> str:
+    return Path(path).name
 
 
 

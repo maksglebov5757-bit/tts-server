@@ -8,6 +8,7 @@ from typing import Any
 from core.backends.base import LoadedModelHandle, TTSBackend
 from core.backends.capabilities import BackendCapabilitySet, BackendDiagnostics
 from core.errors import ModelLoadError, TTSGenerationError
+from core.metrics import OperationalMetricsRegistry
 from core.models.catalog import ModelSpec
 
 try:
@@ -31,10 +32,11 @@ class TorchBackend(TTSBackend):
     key = "torch"
     label = "PyTorch + Transformers"
 
-    def __init__(self, models_dir: Path):
+    def __init__(self, models_dir: Path, *, metrics: OperationalMetricsRegistry | None = None):
         self.models_dir = models_dir
         self._cache: dict[str, Any] = {}
         self._lock = Lock()
+        self._metrics = metrics or OperationalMetricsRegistry()
 
     def capabilities(self) -> BackendCapabilitySet:
         return BackendCapabilitySet(
@@ -89,6 +91,7 @@ class TorchBackend(TTSBackend):
         with self._lock:
             runtime_model = self._cache.get(spec.folder)
             if runtime_model is None:
+                self._metrics.collector.increment("models.cache.miss", tags={"backend": self.key})
                 try:
                     runtime_model = Qwen3TTSModel.from_pretrained(
                         str(model_path),
@@ -96,11 +99,15 @@ class TorchBackend(TTSBackend):
                         dtype=self._resolve_dtype(),
                     )
                 except Exception as exc:  # pragma: no cover
+                    self._metrics.collector.increment("models.load.failed", tags={"backend": self.key})
                     raise ModelLoadError(
                         str(exc),
                         details={"model": spec.api_name, "model_path": str(model_path), "backend": self.key},
                     ) from exc
                 self._cache[spec.folder] = runtime_model
+                self._metrics.collector.observe_timing("models.load.duration_ms", 0.0, tags={"backend": self.key})
+            else:
+                self._metrics.collector.increment("models.cache.hit", tags={"backend": self.key})
 
         return LoadedModelHandle(
             spec=spec,
@@ -112,12 +119,13 @@ class TorchBackend(TTSBackend):
     def inspect_model(self, spec: ModelSpec) -> dict[str, Any]:
         resolved_path = self.resolve_model_path(spec.folder)
         available = resolved_path is not None
-        artifact_check = self._check_model_artifacts(resolved_path) if resolved_path else {
+        artifact_check = spec.artifact_validation_for_backend(self.key).validate(resolved_path) if resolved_path else {
             "loadable": False,
-            "required_artifacts": ["config.json", "model.safetensors|model.safetensors.index.json", "preprocessor_config.json", "tokenizer_config.json|vocab.json"],
+            "required_artifacts": [rule.describe() for rule in spec.artifact_validation_for_backend(self.key).required_rules],
             "missing_artifacts": ["model_directory"],
         }
         runtime_ready = bool(available and artifact_check["loadable"] and self.is_available())
+        cached = spec.folder in self._cache
         return {
             "key": spec.key,
             "id": spec.api_name,
@@ -129,8 +137,17 @@ class TorchBackend(TTSBackend):
             "available": available,
             "loadable": artifact_check["loadable"],
             "runtime_ready": runtime_ready,
-            "cached": spec.folder in self._cache,
+            "cached": cached,
             "resolved_path": str(resolved_path) if resolved_path else None,
+            "runtime_path": str(resolved_path) if resolved_path else None,
+            "cache": {
+                "loaded": cached,
+                "cache_key": spec.folder,
+                "backend": self.key,
+                "normalized_runtime": False,
+                "runtime_path": str(resolved_path) if resolved_path else None,
+                "eviction_policy": "not_configured",
+            },
             "missing_artifacts": artifact_check["missing_artifacts"],
             "required_artifacts": artifact_check["required_artifacts"],
             "capabilities": self.capabilities().to_dict(),
@@ -159,6 +176,57 @@ class TorchBackend(TTSBackend):
                 "dtype": self._resolve_dtype_name(),
             },
         )
+
+    def cache_diagnostics(self) -> dict[str, Any]:
+        loaded_models = []
+        for folder in sorted(self._cache):
+            resolved_path = self.resolve_model_path(folder)
+            loaded_models.append(
+                {
+                    "cache_key": folder,
+                    "model_id": folder,
+                    "backend": self.key,
+                    "loaded": True,
+                    "resolved_path": str(resolved_path) if resolved_path else None,
+                    "runtime_path": str(resolved_path) if resolved_path else None,
+                    "normalized_runtime": False,
+                }
+            )
+        return {
+            "cached_model_count": len(loaded_models),
+            "cached_model_ids": [item["model_id"] for item in loaded_models],
+            "cache_policy": {
+                "cache_scope": "process_local",
+                "eviction": "not_configured",
+                "normalized_runtime_dirs": 0,
+            },
+            "loaded_models": loaded_models,
+        }
+
+    def metrics_summary(self) -> dict[str, Any]:
+        return self._metrics.model_summary()
+
+    def preload_models(self, specs: tuple[ModelSpec, ...]) -> dict[str, Any]:
+        loaded_model_ids: list[str] = []
+        failed_model_ids: list[str] = []
+        errors: list[dict[str, Any]] = []
+        for spec in specs:
+            try:
+                self.load_model(spec)
+            except ModelLoadError as exc:
+                failed_model_ids.append(spec.api_name)
+                errors.append({"model": spec.api_name, "reason": str(exc), "details": exc.context.to_dict()})
+            else:
+                loaded_model_ids.append(spec.api_name)
+        return {
+            "requested": len(specs),
+            "attempted": len(specs),
+            "loaded": len(loaded_model_ids),
+            "failed": len(failed_model_ids),
+            "loaded_model_ids": loaded_model_ids,
+            "failed_model_ids": failed_model_ids,
+            "errors": errors,
+        }
 
     def synthesize_custom(
         self,
@@ -239,33 +307,6 @@ class TorchBackend(TTSBackend):
                 str(exc),
                 details={"backend": self.key, "failure_kind": "audio_write_failed", "output_path": str(target)},
             ) from exc
-
-    @staticmethod
-    def _check_model_artifacts(model_path: Path) -> dict[str, Any]:
-        requirements = {
-            "config.json": model_path / "config.json",
-            "model.safetensors|model.safetensors.index.json": [
-                model_path / "model.safetensors",
-                model_path / "model.safetensors.index.json",
-            ],
-            "preprocessor_config.json": model_path / "preprocessor_config.json",
-            "tokenizer_config.json|vocab.json": [
-                model_path / "tokenizer_config.json",
-                model_path / "vocab.json",
-            ],
-        }
-        missing: list[str] = []
-        for name, requirement in requirements.items():
-            if isinstance(requirement, list):
-                if not any(path.exists() for path in requirement):
-                    missing.append(name)
-            elif not requirement.exists():
-                missing.append(name)
-        return {
-            "loadable": not missing,
-            "required_artifacts": list(requirements.keys()),
-            "missing_artifacts": missing,
-        }
 
     @staticmethod
     def _resolve_device_map() -> str:

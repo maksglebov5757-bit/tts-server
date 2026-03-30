@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def normalize_text_value(value: str, *, empty_message: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError(empty_message)
+    return value
+
+
+
+def validate_text_length(value: str, *, field_name: str, max_chars: int) -> str:
+    if len(value) > max_chars:
+        raise ValueError(f"{field_name} must be at most {max_chars} characters")
+    return value
+
 
 
 class OpenAISpeechRequest(BaseModel):
@@ -17,10 +33,7 @@ class OpenAISpeechRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def validate_input(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Input text must not be empty")
-        return value
+        return normalize_text_value(value, empty_message="Input text must not be empty")
 
 
 class CustomTTSRequest(BaseModel):
@@ -37,10 +50,7 @@ class CustomTTSRequest(BaseModel):
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Text must not be empty")
-        return value
+        return normalize_text_value(value, empty_message="Text must not be empty")
 
 
 class DesignTTSRequest(BaseModel):
@@ -54,10 +64,35 @@ class DesignTTSRequest(BaseModel):
     @field_validator("text", "voice_description")
     @classmethod
     def validate_non_empty(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Value must not be empty")
-        return value
+        return normalize_text_value(value, empty_message="Value must not be empty")
+
+
+class JobFailurePayload(BaseModel):
+    code: str
+    message: str
+    details: Optional[dict[str, object]] = None
+
+
+class JobSnapshotPayload(BaseModel):
+    request_id: str
+    job_id: str
+    submit_request_id: str
+    status: str
+    operation: str
+    mode: str
+    model: Optional[str] = None
+    backend: Optional[str] = None
+    response_format: Optional[str] = None
+    save_output: bool
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    saved_path: Optional[str] = None
+    terminal_error: Optional[JobFailurePayload] = None
+    status_url: str
+    result_url: str
+    cancel_url: str
+    idempotency_key: Optional[str] = None
 
 
 class TTSSuccessMetadata(BaseModel):

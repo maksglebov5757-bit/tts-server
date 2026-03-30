@@ -11,6 +11,7 @@ class ErrorDescriptor:
     message: str
     details: dict[str, Any]
     retryable: bool = False
+    headers: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)

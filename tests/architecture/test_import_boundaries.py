@@ -16,6 +16,13 @@ LEGACY_SERVER_MODULES = {
     "server.infrastructure.audio_io",
 }
 ADAPTER_IMPORT_PREFIXES = ("server", "cli")
+FORBIDDEN_JOB_EXECUTION_IMPORT_TOKENS = (
+    "collections",
+    "contextlib",
+    "pathlib",
+    "queue",
+    "threading",
+)
 
 
 def _collect_import_targets(base_dir: str) -> dict[Path, set[str]]:
@@ -83,5 +90,45 @@ def test_server_app_is_thin_composition_root():
     assert "register_health_routes" in content
     assert "register_models_routes" in content
     assert "register_tts_routes" in content
+    assert "job_execution" in content
+    assert "job_manager.start" in content
+    assert "job_manager.stop" in content
     assert '@app.get("/health/live"' not in content
     assert '@app.post("/v1/audio/speech"' not in content
+
+
+def test_job_execution_module_has_no_adapter_imports():
+    imports_by_file = _collect_import_targets("core/application")
+    forbidden = {
+        str(path): sorted(name for name in imports if _matches_prefix(name, ADAPTER_IMPORT_PREFIXES))
+        for path, imports in imports_by_file.items()
+        if path.name == "job_execution.py" and any(_matches_prefix(name, ADAPTER_IMPORT_PREFIXES) for name in imports)
+    }
+    assert forbidden == {}
+
+
+def test_job_execution_module_has_no_local_infra_implementation_imports():
+    imports = _collect_import_targets("core/application")[Path("core/application/job_execution.py")]
+    forbidden = sorted(
+        name
+        for name in imports
+        if _matches_prefix(name, FORBIDDEN_JOB_EXECUTION_IMPORT_TOKENS)
+    )
+    assert forbidden == []
+
+
+def test_local_job_execution_adapters_live_in_infrastructure_layer():
+    content = Path("core/infrastructure/job_execution_local.py").read_text(encoding="utf-8")
+    assert "class LocalInMemoryJobStore" in content
+    assert "class LocalBoundedExecutionManager" in content
+    assert "class LocalJobArtifactStore" in content
+
+
+def test_job_wiring_in_core_bootstrap_is_config_driven_and_local_default_ready():
+    content = Path("core/bootstrap.py").read_text(encoding="utf-8")
+    assert "def build_job_artifact_store" in content
+    assert "def build_job_metadata_store" in content
+    assert "def build_job_execution_backend" in content
+    assert 'settings.job_artifact_backend == "local"' in content
+    assert 'settings.job_metadata_backend == "local"' in content
+    assert 'settings.job_execution_backend == "local"' in content

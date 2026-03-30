@@ -13,6 +13,7 @@ from core.models.catalog import MODEL_SPECS
 pytestmark = pytest.mark.unit
 
 
+
 def _write_model_artifacts(model_dir: Path, config: dict) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -22,6 +23,7 @@ def _write_model_artifacts(model_dir: Path, config: dict) -> None:
     speech_tokenizer_dir = model_dir / "speech_tokenizer"
     speech_tokenizer_dir.mkdir(exist_ok=True)
     (speech_tokenizer_dir / "config.json").write_text("{}\n", encoding="utf-8")
+
 
 
 def _make_nested_qwen3_config() -> dict:
@@ -48,6 +50,7 @@ def _make_nested_qwen3_config() -> dict:
     }
 
 
+
 def test_qwen3_nested_config_is_normalized_into_temp_runtime_dir(tmp_path: Path):
     backend = MLXBackend(models_dir=tmp_path)
     spec = MODEL_SPECS["1"]
@@ -67,6 +70,7 @@ def test_qwen3_nested_config_is_normalized_into_temp_runtime_dir(tmp_path: Path)
     assert (runtime_dir / "speech_tokenizer").exists()
 
 
+
 def test_qwen3_nested_config_validation_rejects_incomplete_talker_config(tmp_path: Path):
     backend = MLXBackend(models_dir=tmp_path)
     spec = MODEL_SPECS["1"]
@@ -84,6 +88,7 @@ def test_qwen3_nested_config_validation_rejects_incomplete_talker_config(tmp_pat
     assert details["backend"] == "mlx"
 
 
+
 def test_non_qwen3_config_is_not_rewritten(tmp_path: Path):
     backend = MLXBackend(models_dir=tmp_path)
     spec = MODEL_SPECS["1"]
@@ -94,3 +99,25 @@ def test_non_qwen3_config_is_not_rewritten(tmp_path: Path):
     runtime_dir = backend._prepare_runtime_model_path(spec=spec, model_path=model_dir)
 
     assert runtime_dir == model_dir
+
+
+
+def test_cache_diagnostics_reports_normalized_runtime_dirs(tmp_path: Path):
+    backend = MLXBackend(models_dir=tmp_path)
+    spec = MODEL_SPECS["1"]
+    model_dir = tmp_path / spec.folder
+    _write_model_artifacts(model_dir, _make_nested_qwen3_config())
+
+    runtime_dir = backend._prepare_runtime_model_path(spec=spec, model_path=model_dir)
+    backend._cache[spec.folder] = object()
+
+    diagnostics = backend.cache_diagnostics()
+    inspection = backend.inspect_model(spec)
+
+    assert diagnostics["cached_model_count"] == 1
+    assert diagnostics["cache_policy"]["normalized_runtime_dirs"] == 1
+    assert diagnostics["loaded_models"][0]["normalized_runtime"] is True
+    assert diagnostics["loaded_models"][0]["runtime_path"] == str(runtime_dir)
+    assert inspection["cache"]["loaded"] is True
+    assert inspection["cache"]["normalized_runtime"] is True
+    assert inspection["runtime_path"] == str(runtime_dir)
