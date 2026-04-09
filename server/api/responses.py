@@ -1,3 +1,26 @@
+# FILE: server/api/responses.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Define HTTP response formatting utilities.
+#   SCOPE: Audio response builders, error response builders
+#   DEPENDS: M-CONTRACTS
+#   LINKS: M-SERVER
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   resolve_save_output - Resolve request-level output persistence override against server defaults
+#   build_error_response - Serialize API error descriptors into JSON HTTP responses
+#   build_audio_response - Build HTTP audio responses and emit response-ready observability events
+#   public_artifact_name - Reduce internal artifact paths to public-safe filenames
+#   wav_to_pcm_bytes - Extract raw PCM bytes from WAV payloads
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import io
@@ -14,27 +37,51 @@ from server.api.contracts import ErrorDescriptor
 from server.schemas.errors import ErrorResponse
 
 
-
+# START_CONTRACT: resolve_save_output
+#   PURPOSE: Resolve whether output persistence is enabled for a request using explicit override or default.
+#   INPUTS: { save_output: Optional[bool] - request-level override, default_save_output: bool - server default value }
+#   OUTPUTS: { bool - resolved output persistence flag }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: resolve_save_output
 def resolve_save_output(save_output: Optional[bool], default_save_output: bool) -> bool:
     return default_save_output if save_output is None else save_output
 
 
-
-def build_error_response(*, request: Request, descriptor: ErrorDescriptor) -> JSONResponse:
+# START_CONTRACT: build_error_response
+#   PURPOSE: Build a structured JSON HTTP response from a public error descriptor.
+#   INPUTS: { request: Request - request carrying correlation state, descriptor: ErrorDescriptor - public error response descriptor }
+#   OUTPUTS: { JSONResponse - serialized API error response }
+#   SIDE_EFFECTS: Reads request state and sets HTTP response headers from descriptor metadata
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_error_response
+def build_error_response(
+    *, request: Request, descriptor: ErrorDescriptor
+) -> JSONResponse:
     payload = ErrorResponse(
         code=descriptor.code,
         message=descriptor.message,
         details=descriptor.details,
         request_id=getattr(request.state, "request_id", "unknown"),
     )
-    response = JSONResponse(status_code=descriptor.status_code, content=payload.model_dump())
+    response = JSONResponse(
+        status_code=descriptor.status_code, content=payload.model_dump()
+    )
     for header_name, header_value in (descriptor.headers or {}).items():
         response.headers[header_name] = header_value
     return response
 
 
-
-def build_audio_response(request: Request, result: GenerationResult, response_format: str, logger) -> Response:
+# START_CONTRACT: build_audio_response
+#   PURPOSE: Build an HTTP audio response from a generation result and requested response format.
+#   INPUTS: { request: Request - request carrying correlation state, result: GenerationResult - completed generation output, response_format: str - requested wire format, logger: Any - structured logger for response events }
+#   OUTPUTS: { Response - HTTP response containing generated audio bytes }
+#   SIDE_EFFECTS: May transcode WAV to PCM, emits response logs, and sets response headers
+#   LINKS: M-SERVER, M-OBSERVABILITY
+# END_CONTRACT: build_audio_response
+def build_audio_response(
+    request: Request, result: GenerationResult, response_format: str, logger
+) -> Response:
     request_id = getattr(request.state, "request_id", "unknown")
     audio_bytes = result.audio.bytes_data
     media_type = result.audio.media_type
@@ -55,7 +102,7 @@ def build_audio_response(request: Request, result: GenerationResult, response_fo
     log_event(
         logger,
         level=20,
-        event="http.audio_response.ready",
+        event="[Responses][build_audio_response][BUILD_AUDIO_RESPONSE]",
         message="Audio response is ready",
         model=result.model,
         mode=result.mode,
@@ -68,12 +115,32 @@ def build_audio_response(request: Request, result: GenerationResult, response_fo
     return Response(content=audio_bytes, media_type=media_type, headers=headers)
 
 
-
+# START_CONTRACT: public_artifact_name
+#   PURPOSE: Convert an internal artifact path into a public-safe filename.
+#   INPUTS: { path: str | Path - artifact path or filename }
+#   OUTPUTS: { str - basename safe to expose in API responses }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: public_artifact_name
 def public_artifact_name(path: str | Path) -> str:
     return Path(path).name
 
 
-
+# START_CONTRACT: wav_to_pcm_bytes
+#   PURPOSE: Extract raw PCM frame bytes from a WAV audio payload.
+#   INPUTS: { wav_bytes: bytes - WAV container bytes }
+#   OUTPUTS: { bytes - PCM frame data without WAV headers }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: wav_to_pcm_bytes
 def wav_to_pcm_bytes(wav_bytes: bytes) -> bytes:
     with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
         return wav_file.readframes(wav_file.getnframes())
+
+__all__ = [
+    "resolve_save_output",
+    "build_error_response",
+    "build_audio_response",
+    "public_artifact_name",
+    "wav_to_pcm_bytes",
+]

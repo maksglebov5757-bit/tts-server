@@ -1,3 +1,23 @@
+# FILE: server/api/routes_health.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Define health check HTTP endpoints.
+#   SCOPE: GET /health/live, GET /health/ready
+#   DEPENDS: M-MODEL-REGISTRY, M-METRICS
+#   LINKS: M-SERVER
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   register_health_routes - Register liveness and readiness routes on the FastAPI app
+#   build_readiness_report - Build a structured readiness response payload
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
@@ -8,13 +28,33 @@ from server.api.policies import enforce_control_plane_admission
 from server.schemas.audio import HealthResponse
 
 
-
+# START_CONTRACT: register_health_routes
+#   PURPOSE: Register liveness and readiness HTTP endpoints on the FastAPI application.
+#   INPUTS: { app: FastAPI - application to attach routes to, logger: Any - structured logger used by endpoint handlers }
+#   OUTPUTS: { None - routes are attached in place }
+#   SIDE_EFFECTS: Mutates FastAPI routing table by registering health endpoints
+#   LINKS: M-SERVER, M-METRICS
+# END_CONTRACT: register_health_routes
 def register_health_routes(app: FastAPI, logger) -> None:
     @app.get("/health/live", response_model=HealthResponse, tags=["health"])
+    # START_CONTRACT: health_live
+    #   PURPOSE: Return a simple liveness probe indicating the server process is alive.
+    #   INPUTS: { none: None - endpoint has no request parameters }
+    #   OUTPUTS: { HealthResponse - liveness payload for process health }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-SERVER
+    # END_CONTRACT: health_live
     async def health_live() -> HealthResponse:
         return HealthResponse(status="ok", checks={"process": "alive"})
 
     @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
+    # START_CONTRACT: health_ready
+    #   PURPOSE: Evaluate server readiness using admission checks and runtime readiness details.
+    #   INPUTS: { request: Request - incoming readiness probe request }
+    #   OUTPUTS: { HealthResponse - readiness status with diagnostic checks }
+    #   SIDE_EFFECTS: Consumes control-plane admission checks and emits readiness logs
+    #   LINKS: M-SERVER, M-METRICS, M-MODEL-REGISTRY
+    # END_CONTRACT: health_ready
     async def health_ready(request: Request) -> HealthResponse:
         with operation_scope("server.health_ready"):
             await enforce_control_plane_admission(request)
@@ -22,7 +62,7 @@ def register_health_routes(app: FastAPI, logger) -> None:
             log_event(
                 logger,
                 level=20,
-                event="health.ready.checked",
+                event="[RoutesHealth][health_ready][HEALTH_READY]",
                 message="Readiness probe evaluated",
                 status=readiness.status,
                 available_models=readiness.checks["models"]["available_models"],
@@ -34,7 +74,13 @@ def register_health_routes(app: FastAPI, logger) -> None:
             return readiness
 
 
-
+# START_CONTRACT: build_readiness_report
+#   PURPOSE: Build a structured readiness report from registry, ffmpeg, config, and runtime state.
+#   INPUTS: { request: Request - request carrying app state dependencies }
+#   OUTPUTS: { HealthResponse - readiness payload with detailed checks }
+#   SIDE_EFFECTS: Reads shared app state and inspects filesystem-backed configuration paths
+#   LINKS: M-SERVER, M-MODEL-REGISTRY, M-METRICS
+# END_CONTRACT: build_readiness_report
 def build_readiness_report(request: Request) -> HealthResponse:
     registry_report = request.app.state.registry.readiness_report()
     ffmpeg_ready = check_ffmpeg_available()
@@ -60,7 +106,13 @@ def build_readiness_report(request: Request) -> HealthResponse:
         "backend_autoselect": settings.backend_autoselect,
         "metrics": request.app.state.metrics.readiness_summary(),
     }
-    status = "ok" if registry_report["registry_ready"] and ffmpeg_ready and config["models_dir_exists"] else "degraded"
+    status = (
+        "ok"
+        if registry_report["registry_ready"]
+        and ffmpeg_ready
+        and config["models_dir_exists"]
+        else "degraded"
+    )
     return HealthResponse(
         status=status,
         checks={
@@ -70,3 +122,8 @@ def build_readiness_report(request: Request) -> HealthResponse:
             "runtime": runtime,
         },
     )
+
+__all__ = [
+    "register_health_routes",
+    "build_readiness_report",
+]

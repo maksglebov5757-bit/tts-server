@@ -1,3 +1,39 @@
+# FILE: server/api/routes_tts.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Define synchronous and async TTS HTTP endpoints.
+#   SCOPE: POST /v1/audio/speech, POST /api/v1/tts/custom|design|clone, async job endpoints
+#   DEPENDS: M-APPLICATION, M-CONTRACTS, M-ERRORS, M-OBSERVABILITY
+#   LINKS: M-SERVER
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   T - Generic type variable used by async timeout helper utilities
+#   build_text_length_error - Build validation errors for invalid text lengths
+#   build_upload_validation_error - Build validation errors for invalid clone uploads
+#   enforce_text_length - Validate text against configured length limits
+#   current_principal_id - Read current principal id from request state
+#   resolve_idempotency_scope - Resolve idempotency scope for async submissions
+#   build_job_urls - Build status, result, and cancel URLs for async jobs
+#   build_job_snapshot_payload - Convert internal job snapshots to public payloads
+#   get_job_snapshot_or_raise - Load a job snapshot and enforce owner access
+#   build_idempotency_fingerprint - Build deterministic async job idempotency fingerprints
+#   create_custom_job_submission_from_openai - Build async custom submissions from OpenAI payloads
+#   create_custom_job_submission_from_custom - Build async custom submissions from custom payloads
+#   create_design_job_submission - Build async voice design submissions
+#   validate_clone_upload - Validate clone upload metadata and content type
+#   build_clone_staged_path - Build a staging path for uploaded clone audio
+#   stage_clone_job_submission - Persist uploaded clone media and build async clone submissions
+#   run_inference_with_timeout - Run synthesis with timeout handling for sync routes
+#   register_tts_routes - Register synchronous and async TTS routes on the FastAPI app
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, function contracts, semantic blocks, and migrated log events to block-reference format]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import asyncio
@@ -84,6 +120,13 @@ _ALLOWED_CLONE_UPLOAD_SUFFIXES = frozenset(
 )
 
 
+# START_CONTRACT: build_text_length_error
+#   PURPOSE: Build a standardized validation error response for oversized or empty text fields.
+#   INPUTS: { request: Request - request carrying correlation state, field_name: str - field that failed validation, message: str - validation message }
+#   OUTPUTS: { JSONResponse - standardized validation error response }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_text_length_error
 def build_text_length_error(
     *, request: Request, field_name: str, message: str
 ) -> JSONResponse:
@@ -102,6 +145,13 @@ def build_text_length_error(
     )
 
 
+# START_CONTRACT: build_upload_validation_error
+#   PURPOSE: Build a standardized error response for invalid clone upload inputs.
+#   INPUTS: { request: Request - request carrying correlation state, code: str - machine-readable error code, message: str - human-readable summary, details: dict[str, object] - structured validation details }
+#   OUTPUTS: { JSONResponse - standardized upload validation error response }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_upload_validation_error
 def build_upload_validation_error(
     *, request: Request, code: str, message: str, details: dict[str, object]
 ) -> JSONResponse:
@@ -116,18 +166,46 @@ def build_upload_validation_error(
     )
 
 
+# START_CONTRACT: enforce_text_length
+#   PURPOSE: Validate a text field against the configured character limit.
+#   INPUTS: { value: str - text to validate, field_name: str - field label used in errors, max_chars: int - maximum allowed characters }
+#   OUTPUTS: { str - validated text value }
+#   SIDE_EFFECTS: Raises ValueError when text exceeds the configured limit
+#   LINKS: M-SERVER
+# END_CONTRACT: enforce_text_length
 def enforce_text_length(*, value: str, field_name: str, max_chars: int) -> str:
     return validate_text_length(value, field_name=field_name, max_chars=max_chars)
 
 
+# START_CONTRACT: current_principal_id
+#   PURPOSE: Return the current request principal identifier from request state.
+#   INPUTS: { request: Request - request containing resolved principal state }
+#   OUTPUTS: { str - current principal identifier }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: current_principal_id
 def current_principal_id(request: Request) -> str:
     return request.state.principal.principal_id
 
 
+# START_CONTRACT: resolve_idempotency_scope
+#   PURPOSE: Resolve the idempotency scope key used for async job submissions.
+#   INPUTS: { request: Request - request containing resolved principal state }
+#   OUTPUTS: { str - idempotency scope identifier }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: resolve_idempotency_scope
 def resolve_idempotency_scope(request: Request) -> str:
     return current_principal_id(request)
 
 
+# START_CONTRACT: build_job_urls
+#   PURPOSE: Build status, result, and cancel URLs for an async TTS job.
+#   INPUTS: { request: Request - request used for route URL generation, job_id: str - async job identifier }
+#   OUTPUTS: { tuple[str, str, str] - status, result, and cancel endpoint URLs }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: build_job_urls
 def build_job_urls(request: Request, job_id: str) -> tuple[str, str, str]:
     return (
         str(request.url_for("tts_job_status", job_id=job_id)),
@@ -136,6 +214,13 @@ def build_job_urls(request: Request, job_id: str) -> tuple[str, str, str]:
     )
 
 
+# START_CONTRACT: build_job_snapshot_payload
+#   PURPOSE: Convert an internal job snapshot into the public async job response payload.
+#   INPUTS: { request: Request - request used for URL and request id resolution, snapshot: JobSnapshot - internal job snapshot }
+#   OUTPUTS: { JobSnapshotPayload - public async job snapshot payload }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-CONTRACTS
+# END_CONTRACT: build_job_snapshot_payload
 def build_job_snapshot_payload(
     request: Request, snapshot: JobSnapshot
 ) -> JobSnapshotPayload:
@@ -174,6 +259,13 @@ def build_job_snapshot_payload(
     )
 
 
+# START_CONTRACT: get_job_snapshot_or_raise
+#   PURPOSE: Load a job snapshot from execution state and enforce owner access.
+#   INPUTS: { request: Request - request carrying job execution state and principal, job_id: str - async job identifier }
+#   OUTPUTS: { JobSnapshot - loaded job snapshot owned by the current principal }
+#   SIDE_EFFECTS: Raises job-not-found or forbidden errors when access fails
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: get_job_snapshot_or_raise
 def get_job_snapshot_or_raise(request: Request, job_id: str) -> JobSnapshot:
     snapshot = request.app.state.job_execution.get_job(job_id)
     if snapshot is None:
@@ -182,6 +274,13 @@ def get_job_snapshot_or_raise(request: Request, job_id: str) -> JobSnapshot:
     return snapshot
 
 
+# START_CONTRACT: build_idempotency_fingerprint
+#   PURPOSE: Build a deterministic payload fingerprint for async job idempotency handling.
+#   INPUTS: { operation: JobOperation - async job operation type, payload: dict[str, object] - normalized submission payload }
+#   OUTPUTS: { str - SHA-256 fingerprint for idempotency comparison }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: build_idempotency_fingerprint
 def build_idempotency_fingerprint(
     *, operation: JobOperation, payload: dict[str, object]
 ) -> str:
@@ -197,6 +296,13 @@ def build_idempotency_fingerprint(
     return hashlib.sha256(normalized_payload.encode("utf-8")).hexdigest()
 
 
+# START_CONTRACT: create_custom_job_submission_from_openai
+#   PURPOSE: Convert an OpenAI-compatible speech payload into an async custom synthesis job submission.
+#   INPUTS: { request: Request - request carrying app state and principal, payload: OpenAISpeechRequest - validated OpenAI speech payload, idempotency_key: Optional[str] - optional client idempotency key }
+#   OUTPUTS: { Any - job submission object for async execution }
+#   SIDE_EFFECTS: Reads app settings and may raise validation errors for oversized text
+#   LINKS: M-SERVER, M-CONTRACTS
+# END_CONTRACT: create_custom_job_submission_from_openai
 def create_custom_job_submission_from_openai(
     request: Request,
     payload: OpenAISpeechRequest,
@@ -248,6 +354,13 @@ def create_custom_job_submission_from_openai(
     )
 
 
+# START_CONTRACT: create_custom_job_submission_from_custom
+#   PURPOSE: Convert a custom TTS payload into an async custom synthesis job submission.
+#   INPUTS: { request: Request - request carrying app state and principal, payload: CustomTTSRequest - validated custom TTS payload, idempotency_key: Optional[str] - optional client idempotency key }
+#   OUTPUTS: { Any - job submission object for async execution }
+#   SIDE_EFFECTS: Reads app settings and may raise validation errors for oversized text
+#   LINKS: M-SERVER, M-CONTRACTS
+# END_CONTRACT: create_custom_job_submission_from_custom
 def create_custom_job_submission_from_custom(
     request: Request,
     payload: CustomTTSRequest,
@@ -304,6 +417,13 @@ def create_custom_job_submission_from_custom(
     )
 
 
+# START_CONTRACT: create_design_job_submission
+#   PURPOSE: Convert a voice design payload into an async voice design job submission.
+#   INPUTS: { request: Request - request carrying app state and principal, payload: DesignTTSRequest - validated design payload, idempotency_key: Optional[str] - optional client idempotency key }
+#   OUTPUTS: { Any - job submission object for async execution }
+#   SIDE_EFFECTS: Reads app settings and may raise validation errors for oversized text
+#   LINKS: M-SERVER, M-CONTRACTS
+# END_CONTRACT: create_design_job_submission
 def create_design_job_submission(
     request: Request,
     payload: DesignTTSRequest,
@@ -355,6 +475,13 @@ def create_design_job_submission(
     )
 
 
+# START_CONTRACT: validate_clone_upload
+#   PURPOSE: Validate clone reference upload bytes, extension, and media type against server policy.
+#   INPUTS: { request: Request - request carrying server settings, ref_audio: UploadFile - uploaded reference audio, upload_bytes: bytes - uploaded file bytes }
+#   OUTPUTS: { JSONResponse | None - validation error response when invalid, otherwise none }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: validate_clone_upload
 def validate_clone_upload(
     request: Request, ref_audio: UploadFile, upload_bytes: bytes
 ) -> JSONResponse | None:
@@ -407,6 +534,13 @@ def validate_clone_upload(
     return None
 
 
+# START_CONTRACT: build_clone_staged_path
+#   PURPOSE: Build a unique staging path for a clone upload inside the configured upload directory.
+#   INPUTS: { request: Request - request carrying server settings, ref_audio: StarletteUploadFile - uploaded reference audio metadata, prefix: str - filename prefix for the staged artifact }
+#   OUTPUTS: { Path - unique filesystem path for the staged upload }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: build_clone_staged_path
 def build_clone_staged_path(
     request: Request, ref_audio: StarletteUploadFile, *, prefix: str
 ) -> Path:
@@ -417,6 +551,13 @@ def build_clone_staged_path(
     )
 
 
+# START_CONTRACT: stage_clone_job_submission
+#   PURPOSE: Validate clone inputs, stage uploaded audio, and build an async clone job submission.
+#   INPUTS: { request: Request - request carrying app state and principal, text: str - synthesis text, ref_audio: UploadFile - uploaded reference audio, ref_text: Optional[str] - optional reference transcript, language: str - requested language value, model: Optional[str] - optional model override, save_output: Optional[bool] - output persistence override, idempotency_key: Optional[str] - optional client idempotency key }
+#   OUTPUTS: { tuple[Any | None, JSONResponse | None] - staged job submission or validation error response }
+#   SIDE_EFFECTS: Reads uploaded file bytes and writes a staged upload file to disk when validation succeeds
+#   LINKS: M-SERVER, M-CONTRACTS
+# END_CONTRACT: stage_clone_job_submission
 async def stage_clone_job_submission(
     request: Request,
     *,
@@ -428,6 +569,7 @@ async def stage_clone_job_submission(
     save_output: Optional[bool],
     idempotency_key: Optional[str] = None,
 ):
+    # START_BLOCK_VALIDATE_CLONE_JOB_TEXT
     stripped_text = text.strip()
     if not stripped_text:
         return None, build_text_length_error(
@@ -443,12 +585,16 @@ async def stage_clone_job_submission(
         return None, build_text_length_error(
             request=request, field_name="text", message=str(exc)
         )
+    # END_BLOCK_VALIDATE_CLONE_JOB_TEXT
 
+    # START_BLOCK_VALIDATE_CLONE_UPLOAD
     upload_bytes = await ref_audio.read()
     upload_error = validate_clone_upload(request, ref_audio, upload_bytes)
     if upload_error is not None:
         return None, upload_error
+    # END_BLOCK_VALIDATE_CLONE_UPLOAD
 
+    # START_BLOCK_BUILD_CLONE_JOB_SUBMISSION
     resolved_save_output = resolve_save_output(
         save_output, request.app.state.settings.default_save_output
     )
@@ -495,20 +641,31 @@ async def stage_clone_job_submission(
         ),
     )
     return submission, None
+    # END_BLOCK_BUILD_CLONE_JOB_SUBMISSION
 
 
+# START_CONTRACT: run_inference_with_timeout
+#   PURPOSE: Execute a blocking inference call in a worker thread with request timeout enforcement.
+#   INPUTS: { request: Request - request carrying timeout settings and logger, operation_name: str - operation label for logs, call: Callable[[], T] - blocking inference callable }
+#   OUTPUTS: { T - result returned by the inference callable }
+#   SIDE_EFFECTS: Offloads work to a thread, emits execution logs, and raises timeout errors when execution exceeds limits
+#   LINKS: M-SERVER, M-ERRORS, M-OBSERVABILITY
+# END_CONTRACT: run_inference_with_timeout
 async def run_inference_with_timeout(
     *, request: Request, operation_name: str, call: Callable[[], T]
 ) -> T:
+    # START_BLOCK_PREPARE_INFERENCE_TIMEOUT
     timeout_seconds = request.app.state.settings.request_timeout_seconds
     logger = request.app.state.logger
+    # END_BLOCK_PREPARE_INFERENCE_TIMEOUT
 
     with operation_scope(f"tts.{operation_name}.execution"):
+        # START_BLOCK_EXECUTE_SYNTHESIS
         wrapper_timer = Timer()
         log_event(
             logger,
             level=logging.INFO,
-            event="tts.inference.execution.started",
+            event="[RoutesTTS][run_inference_with_timeout][BLOCK_EXECUTE_SYNTHESIS]",
             message="Inference execution wrapper started",
             inference_operation=operation_name,
             execution_mode="thread_offload",
@@ -520,7 +677,7 @@ async def run_inference_with_timeout(
             log_event(
                 logger,
                 level=logging.INFO,
-                event="tts.inference.worker.started",
+                event="[RoutesTTS][run_inference_with_timeout][BLOCK_EXECUTE_SYNTHESIS]",
                 message="Adapter-level inference execution started",
                 inference_operation=operation_name,
                 execution_mode="thread_offload",
@@ -529,15 +686,20 @@ async def run_inference_with_timeout(
             )
             return call()
 
+        # END_BLOCK_EXECUTE_SYNTHESIS
+
         try:
+            # START_BLOCK_AWAIT_WORKER_RESULT
             result = await asyncio.wait_for(
                 asyncio.to_thread(worker_call), timeout=timeout_seconds
             )
+            # END_BLOCK_AWAIT_WORKER_RESULT
         except asyncio.TimeoutError as exc:
+            # START_BLOCK_HANDLE_INFERENCE_TIMEOUT
             log_event(
                 logger,
                 level=logging.WARNING,
-                event="tts.inference.execution.timeout",
+                event="[RoutesTTS][run_inference_with_timeout][BLOCK_HANDLE_INFERENCE_TIMEOUT]",
                 message="Inference execution timed out",
                 inference_operation=operation_name,
                 execution_mode="thread_offload",
@@ -551,11 +713,13 @@ async def run_inference_with_timeout(
                     "timeout_seconds": timeout_seconds,
                 }
             ) from exc
+            # END_BLOCK_HANDLE_INFERENCE_TIMEOUT
         except Exception as exc:
+            # START_BLOCK_HANDLE_INFERENCE_FAILURE
             log_event(
                 logger,
                 level=logging.ERROR,
-                event="tts.inference.execution.failed",
+                event="[RoutesTTS][run_inference_with_timeout][BLOCK_HANDLE_INFERENCE_FAILURE]",
                 message="Inference execution failed",
                 inference_operation=operation_name,
                 execution_mode="thread_offload",
@@ -566,10 +730,12 @@ async def run_inference_with_timeout(
                 error=str(exc),
             )
             raise
+            # END_BLOCK_HANDLE_INFERENCE_FAILURE
+        # START_BLOCK_LOG_INFERENCE_COMPLETION
         log_event(
             logger,
             level=logging.INFO,
-            event="tts.inference.execution.completed",
+            event="[RoutesTTS][run_inference_with_timeout][BLOCK_LOG_INFERENCE_COMPLETION]",
             message="Inference execution wrapper completed",
             inference_operation=operation_name,
             execution_mode="thread_offload",
@@ -578,8 +744,16 @@ async def run_inference_with_timeout(
             duration_ms=wrapper_timer.elapsed_ms,
         )
         return result
+        # END_BLOCK_LOG_INFERENCE_COMPLETION
 
 
+# START_CONTRACT: register_tts_routes
+#   PURPOSE: Register synchronous and asynchronous TTS HTTP endpoints on the FastAPI application.
+#   INPUTS: { app: FastAPI - application to attach routes to, logger: Any - structured logger used by endpoint handlers }
+#   OUTPUTS: { None - routes are attached in place }
+#   SIDE_EFFECTS: Mutates FastAPI routing table by registering TTS endpoints
+#   LINKS: M-SERVER, M-APPLICATION
+# END_CONTRACT: register_tts_routes
 def register_tts_routes(app: FastAPI, logger) -> None:
     @app.post(
         "/v1/audio/speech",
@@ -591,12 +765,20 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: openai_speech
+    #   PURPOSE: Handle synchronous OpenAI-compatible speech synthesis requests.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: OpenAISpeechRequest - validated speech payload }
+    #   OUTPUTS: { Response - generated audio response or validation error response }
+    #   SIDE_EFFECTS: Consumes admission quota, emits endpoint logs, and may trigger synthesis execution
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: openai_speech
     async def openai_speech(request: Request, payload: OpenAISpeechRequest) -> Response:
         with operation_scope("server.openai_speech"):
+            # START_BLOCK_LOG_OPENAI_REQUEST
             log_event(
                 logger,
                 level=logging.INFO,
-                event="tts.endpoint.started",
+                event="[RoutesTTS][openai_speech][BLOCK_LOG_OPENAI_REQUEST]",
                 message="OpenAI-compatible speech request received",
                 endpoint="/v1/audio/speech",
                 model=payload.model,
@@ -604,6 +786,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 language=payload.language,
                 response_format=payload.response_format,
             )
+            # END_BLOCK_LOG_OPENAI_REQUEST
+            # START_BLOCK_VALIDATE_OPENAI_REQUEST
             await enforce_sync_tts_admission(request)
             try:
                 input_text = enforce_text_length(
@@ -615,6 +799,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 return build_text_length_error(
                     request=request, field_name="input", message=str(exc)
                 )
+            # END_BLOCK_VALIDATE_OPENAI_REQUEST
+            # START_BLOCK_EXECUTE_OPENAI_SYNTHESIS
             result = await run_inference_with_timeout(
                 request=request,
                 operation_name="synthesize_custom",
@@ -630,9 +816,12 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                     )
                 ),
             )
+            # END_BLOCK_EXECUTE_OPENAI_SYNTHESIS
+            # START_BLOCK_BUILD_OPENAI_RESPONSE
             return build_audio_response(
                 request, result, payload.response_format, logger
             )
+            # END_BLOCK_BUILD_OPENAI_RESPONSE
 
     @app.post(
         "/api/v1/tts/custom",
@@ -644,8 +833,16 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_custom
+    #   PURPOSE: Handle synchronous custom voice synthesis requests.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: CustomTTSRequest - validated custom synthesis payload }
+    #   OUTPUTS: { Response - generated audio response or validation error response }
+    #   SIDE_EFFECTS: Consumes admission quota, emits endpoint logs, and may trigger synthesis execution
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_custom
     async def tts_custom(request: Request, payload: CustomTTSRequest) -> Response:
         with operation_scope("server.tts_custom"):
+            # START_BLOCK_PREPARE_CUSTOM_REQUEST
             instruct = payload.instruct or payload.emotion or "Normal tone"
             resolved_save_output = resolve_save_output(
                 payload.save_output, request.app.state.settings.default_save_output
@@ -653,7 +850,7 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             log_event(
                 logger,
                 level=logging.INFO,
-                event="tts.endpoint.started",
+                event="[RoutesTTS][tts_custom][BLOCK_PREPARE_CUSTOM_REQUEST]",
                 message="Custom TTS request received",
                 endpoint="/api/v1/tts/custom",
                 model=payload.model,
@@ -661,6 +858,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 language=payload.language,
                 save_output=resolved_save_output,
             )
+            # END_BLOCK_PREPARE_CUSTOM_REQUEST
+            # START_BLOCK_VALIDATE_CUSTOM_REQUEST
             await enforce_sync_tts_admission(request)
             try:
                 text = enforce_text_length(
@@ -672,6 +871,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 return build_text_length_error(
                     request=request, field_name="text", message=str(exc)
                 )
+            # END_BLOCK_VALIDATE_CUSTOM_REQUEST
+            # START_BLOCK_EXECUTE_CUSTOM_SYNTHESIS
             result = await run_inference_with_timeout(
                 request=request,
                 operation_name="synthesize_custom",
@@ -687,7 +888,10 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                     )
                 ),
             )
+            # END_BLOCK_EXECUTE_CUSTOM_SYNTHESIS
+            # START_BLOCK_BUILD_CUSTOM_RESPONSE
             return build_audio_response(request, result, "wav", logger)
+            # END_BLOCK_BUILD_CUSTOM_RESPONSE
 
     @app.post(
         "/api/v1/tts/design",
@@ -699,8 +903,16 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_design
+    #   PURPOSE: Handle synchronous voice design synthesis requests.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: DesignTTSRequest - validated voice design payload }
+    #   OUTPUTS: { Response - generated audio response or validation error response }
+    #   SIDE_EFFECTS: Consumes admission quota, emits endpoint logs, and may trigger synthesis execution
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_design
     async def tts_design(request: Request, payload: DesignTTSRequest) -> Response:
         with operation_scope("server.tts_design"):
+            # START_BLOCK_VALIDATE_DESIGN_REQUEST
             await enforce_sync_tts_admission(request)
             resolved_save_output = resolve_save_output(
                 payload.save_output, request.app.state.settings.default_save_output
@@ -708,7 +920,7 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             log_event(
                 logger,
                 level=logging.INFO,
-                event="tts.endpoint.started",
+                event="[RoutesTTS][tts_design][BLOCK_VALIDATE_DESIGN_REQUEST]",
                 message="Voice design request received",
                 endpoint="/api/v1/tts/design",
                 model=payload.model,
@@ -726,6 +938,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 return build_text_length_error(
                     request=request, field_name="text", message=str(exc)
                 )
+            # END_BLOCK_VALIDATE_DESIGN_REQUEST
+            # START_BLOCK_EXECUTE_DESIGN_SYNTHESIS
             result = await run_inference_with_timeout(
                 request=request,
                 operation_name="synthesize_design",
@@ -739,7 +953,10 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                     )
                 ),
             )
+            # END_BLOCK_EXECUTE_DESIGN_SYNTHESIS
+            # START_BLOCK_BUILD_DESIGN_RESPONSE
             return build_audio_response(request, result, "wav", logger)
+            # END_BLOCK_BUILD_DESIGN_RESPONSE
 
     @app.post(
         "/api/v1/tts/clone",
@@ -752,6 +969,13 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_clone
+    #   PURPOSE: Handle synchronous voice clone synthesis requests with uploaded reference audio.
+    #   INPUTS: { request: Request - incoming HTTP request, text: str - synthesis text, ref_audio: UploadFile - uploaded reference audio, ref_text: Optional[str] - optional reference transcript, language: Optional[str] - requested language value, model: Optional[str] - optional model override, save_output: Optional[bool] - output persistence override }
+    #   OUTPUTS: { Response - generated audio response or validation error response }
+    #   SIDE_EFFECTS: Consumes admission quota, reads uploaded bytes, stages temporary files, emits endpoint logs, and may trigger synthesis execution
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_clone
     async def tts_clone(
         request: Request,
         text: str = Form(...),
@@ -762,6 +986,7 @@ def register_tts_routes(app: FastAPI, logger) -> None:
         save_output: Optional[bool] = Form(default=None),
     ) -> Response:
         with operation_scope("server.tts_clone"):
+            # START_BLOCK_VALIDATE_CLONE_REQUEST
             await enforce_sync_tts_admission(request)
             text = text.strip()
             normalized_language = normalize_language_value(language or "auto")
@@ -782,10 +1007,12 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 return build_text_length_error(
                     request=request, field_name="text", message=str(exc)
                 )
+            # END_BLOCK_VALIDATE_CLONE_REQUEST
+            # START_BLOCK_LOG_CLONE_REQUEST
             log_event(
                 logger,
                 level=logging.INFO,
-                event="tts.endpoint.started",
+                event="[RoutesTTS][tts_clone][BLOCK_LOG_CLONE_REQUEST]",
                 message="Voice clone request received",
                 endpoint="/api/v1/tts/clone",
                 model=model,
@@ -795,11 +1022,15 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 ref_audio_filename=ref_audio.filename,
                 ref_text_provided=bool(ref_text),
             )
+            # END_BLOCK_LOG_CLONE_REQUEST
+            # START_BLOCK_VALIDATE_SYNC_CLONE_UPLOAD
             upload_bytes = await ref_audio.read()
             upload_error = validate_clone_upload(request, ref_audio, upload_bytes)
             if upload_error is not None:
                 return upload_error
+            # END_BLOCK_VALIDATE_SYNC_CLONE_UPLOAD
 
+            # START_BLOCK_EXECUTE_CLONE_SYNTHESIS
             temp_path = build_clone_staged_path(request, ref_audio, prefix="upload")
             temp_path.write_bytes(upload_bytes)
             try:
@@ -819,7 +1050,10 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 )
             finally:
                 temp_path.unlink(missing_ok=True)
+            # END_BLOCK_EXECUTE_CLONE_SYNTHESIS
+            # START_BLOCK_BUILD_CLONE_RESPONSE
             return build_audio_response(request, result, "wav", logger)
+            # END_BLOCK_BUILD_CLONE_RESPONSE
 
     @app.post(
         "/v1/audio/speech/jobs",
@@ -834,18 +1068,31 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: openai_speech_job_submit
+    #   PURPOSE: Submit an OpenAI-compatible speech request for asynchronous execution.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: OpenAISpeechRequest - validated speech payload, idempotency_key: Optional[str] - optional idempotency key header }
+    #   OUTPUTS: { JobSnapshotPayload - submitted or reused async job snapshot }
+    #   SIDE_EFFECTS: Consumes admission quota and enqueues or reuses async job execution state
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: openai_speech_job_submit
     async def openai_speech_job_submit(
         request: Request,
         payload: OpenAISpeechRequest,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JobSnapshotPayload:
+        # START_BLOCK_CHECK_IDEMPOTENCY
         await enforce_async_submit_admission(request)
+        # END_BLOCK_CHECK_IDEMPOTENCY
+        # START_BLOCK_SUBMIT_OPENAI_JOB
         resolution = request.app.state.job_execution.submit_idempotent(
             create_custom_job_submission_from_openai(
                 request, payload, idempotency_key=idempotency_key
             )
         )
+        # END_BLOCK_SUBMIT_OPENAI_JOB
+        # START_BLOCK_BUILD_JOB_RESPONSE
         return build_job_snapshot_payload(request, resolution.snapshot)
+        # END_BLOCK_BUILD_JOB_RESPONSE
 
     @app.post(
         "/api/v1/tts/custom/jobs",
@@ -860,18 +1107,31 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_custom_job_submit
+    #   PURPOSE: Submit a custom TTS request for asynchronous execution.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: CustomTTSRequest - validated custom synthesis payload, idempotency_key: Optional[str] - optional idempotency key header }
+    #   OUTPUTS: { JobSnapshotPayload - submitted or reused async job snapshot }
+    #   SIDE_EFFECTS: Consumes admission quota and enqueues or reuses async job execution state
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_custom_job_submit
     async def tts_custom_job_submit(
         request: Request,
         payload: CustomTTSRequest,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JobSnapshotPayload:
+        # START_BLOCK_CHECK_IDEMPOTENCY_CUSTOM_JOB
         await enforce_async_submit_admission(request)
+        # END_BLOCK_CHECK_IDEMPOTENCY_CUSTOM_JOB
+        # START_BLOCK_SUBMIT_CUSTOM_JOB
         resolution = request.app.state.job_execution.submit_idempotent(
             create_custom_job_submission_from_custom(
                 request, payload, idempotency_key=idempotency_key
             )
         )
+        # END_BLOCK_SUBMIT_CUSTOM_JOB
+        # START_BLOCK_BUILD_CUSTOM_JOB_RESPONSE
         return build_job_snapshot_payload(request, resolution.snapshot)
+        # END_BLOCK_BUILD_CUSTOM_JOB_RESPONSE
 
     @app.post(
         "/api/v1/tts/design/jobs",
@@ -886,18 +1146,31 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_design_job_submit
+    #   PURPOSE: Submit a voice design request for asynchronous execution.
+    #   INPUTS: { request: Request - incoming HTTP request, payload: DesignTTSRequest - validated voice design payload, idempotency_key: Optional[str] - optional idempotency key header }
+    #   OUTPUTS: { JobSnapshotPayload - submitted or reused async job snapshot }
+    #   SIDE_EFFECTS: Consumes admission quota and enqueues or reuses async job execution state
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_design_job_submit
     async def tts_design_job_submit(
         request: Request,
         payload: DesignTTSRequest,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JobSnapshotPayload:
+        # START_BLOCK_CHECK_IDEMPOTENCY_DESIGN_JOB
         await enforce_async_submit_admission(request)
+        # END_BLOCK_CHECK_IDEMPOTENCY_DESIGN_JOB
+        # START_BLOCK_SUBMIT_DESIGN_JOB
         resolution = request.app.state.job_execution.submit_idempotent(
             create_design_job_submission(
                 request, payload, idempotency_key=idempotency_key
             )
         )
+        # END_BLOCK_SUBMIT_DESIGN_JOB
+        # START_BLOCK_BUILD_DESIGN_JOB_RESPONSE
         return build_job_snapshot_payload(request, resolution.snapshot)
+        # END_BLOCK_BUILD_DESIGN_JOB_RESPONSE
 
     @app.post(
         "/api/v1/tts/clone/jobs",
@@ -913,6 +1186,13 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             500: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_clone_job_submit
+    #   PURPOSE: Submit a voice clone request with uploaded reference audio for asynchronous execution.
+    #   INPUTS: { request: Request - incoming HTTP request, text: str - synthesis text, ref_audio: UploadFile - uploaded reference audio, ref_text: Optional[str] - optional reference transcript, language: Optional[str] - requested language value, model: Optional[str] - optional model override, save_output: Optional[bool] - output persistence override, idempotency_key: Optional[str] - optional idempotency key header }
+    #   OUTPUTS: { Response - accepted async job snapshot or validation error response }
+    #   SIDE_EFFECTS: Consumes admission quota, reads uploaded bytes, stages files, and enqueues or reuses async job execution state
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_clone_job_submit
     async def tts_clone_job_submit(
         request: Request,
         text: str = Form(...),
@@ -923,7 +1203,10 @@ def register_tts_routes(app: FastAPI, logger) -> None:
         save_output: Optional[bool] = Form(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Response:
+        # START_BLOCK_CHECK_IDEMPOTENCY_CLONE_JOB
         await enforce_async_submit_admission(request)
+        # END_BLOCK_CHECK_IDEMPOTENCY_CLONE_JOB
+        # START_BLOCK_SUBMIT_CLONE_JOB
         submission, error_response = await stage_clone_job_submission(
             request,
             text=text,
@@ -937,6 +1220,8 @@ def register_tts_routes(app: FastAPI, logger) -> None:
         if error_response is not None:
             return error_response
         assert submission is not None
+        # END_BLOCK_SUBMIT_CLONE_JOB
+        # START_BLOCK_PERSIST_CLONE_JOB_INPUTS
         staged_paths = submission.staged_input_paths
         try:
             resolution = request.app.state.job_execution.submit_idempotent(submission)
@@ -947,12 +1232,15 @@ def register_tts_routes(app: FastAPI, logger) -> None:
         if not resolution.created:
             for staged_path in staged_paths:
                 staged_path.unlink(missing_ok=True)
+        # END_BLOCK_PERSIST_CLONE_JOB_INPUTS
+        # START_BLOCK_BUILD_CLONE_JOB_RESPONSE
         return JSONResponse(
             status_code=202,
             content=build_job_snapshot_payload(request, resolution.snapshot).model_dump(
                 mode="json"
             ),
         )
+        # END_BLOCK_BUILD_CLONE_JOB_RESPONSE
 
     @app.get(
         "/api/v1/tts/jobs/{job_id}",
@@ -965,6 +1253,13 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             404: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_job_status
+    #   PURPOSE: Return the current async job snapshot for an owned TTS job.
+    #   INPUTS: { request: Request - incoming HTTP request, job_id: str - async job identifier }
+    #   OUTPUTS: { JobSnapshotPayload - current async job snapshot }
+    #   SIDE_EFFECTS: Consumes admission quota and enforces owner access checks
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_job_status
     async def tts_job_status(request: Request, job_id: str) -> JobSnapshotPayload:
         await enforce_job_read_admission(request)
         return build_job_snapshot_payload(
@@ -982,12 +1277,22 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             409: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_job_result
+    #   PURPOSE: Return completed audio for an owned async TTS job when it has succeeded.
+    #   INPUTS: { request: Request - incoming HTTP request, job_id: str - async job identifier }
+    #   OUTPUTS: { Response - generated audio response for the completed job }
+    #   SIDE_EFFECTS: Consumes admission quota and may raise job state or ownership errors
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_job_result
     async def tts_job_result(request: Request, job_id: str) -> Response:
+        # START_BLOCK_LOAD_JOB_RESULT
         await enforce_job_read_admission(request)
         resolution = request.app.state.job_execution.get_result(job_id)
         if resolution is None:
             raise JobNotFoundError(job_id)
+        # END_BLOCK_LOAD_JOB_RESULT
 
+        # START_BLOCK_VALIDATE_JOB_RESULT
         snapshot = resolution.snapshot
         ensure_job_owner_access(request, owner_principal_id=snapshot.owner_principal_id)
         if snapshot.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
@@ -1008,7 +1313,9 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                     )
                 },
             )
+        # END_BLOCK_VALIDATE_JOB_RESULT
 
+        # START_BLOCK_BUILD_JOB_RESULT_RESPONSE
         response = build_audio_response(
             request,
             resolution.success.generation,
@@ -1017,6 +1324,7 @@ def register_tts_routes(app: FastAPI, logger) -> None:
         )
         response.headers["x-job-id"] = snapshot.job_id
         return response
+        # END_BLOCK_BUILD_JOB_RESULT_RESPONSE
 
     @app.post(
         "/api/v1/tts/jobs/{job_id}/cancel",
@@ -1030,16 +1338,28 @@ def register_tts_routes(app: FastAPI, logger) -> None:
             409: {"model": ErrorResponse},
         },
     )
+    # START_CONTRACT: tts_job_cancel
+    #   PURPOSE: Cancel an owned async TTS job when it is still cancellable.
+    #   INPUTS: { request: Request - incoming HTTP request, job_id: str - async job identifier }
+    #   OUTPUTS: { Response - job snapshot response reflecting cancellation state }
+    #   SIDE_EFFECTS: Consumes admission quota and mutates async job execution state when cancellation succeeds
+    #   LINKS: M-SERVER, M-APPLICATION
+    # END_CONTRACT: tts_job_cancel
     async def tts_job_cancel(request: Request, job_id: str) -> Response:
+        # START_BLOCK_VALIDATE_CANCELLATION_REQUEST
         await enforce_job_cancel_admission(request)
         snapshot = get_job_snapshot_or_raise(request, job_id)
         if snapshot.status not in {JobStatus.QUEUED, JobStatus.CANCELLED}:
             raise JobNotCancellableError(job_id, snapshot.status.value)
+        # END_BLOCK_VALIDATE_CANCELLATION_REQUEST
 
+        # START_BLOCK_SUBMIT_CANCELLATION
         cancelled = request.app.state.job_execution.cancel(job_id)
         if cancelled is None:
             raise JobNotFoundError(job_id)
+        # END_BLOCK_SUBMIT_CANCELLATION
 
+        # START_BLOCK_BUILD_CANCEL_RESPONSE
         status_code = 200 if snapshot.status is JobStatus.CANCELLED else 202
         return JSONResponse(
             status_code=status_code,
@@ -1047,3 +1367,25 @@ def register_tts_routes(app: FastAPI, logger) -> None:
                 mode="json"
             ),
         )
+        # END_BLOCK_BUILD_CANCEL_RESPONSE
+
+__all__ = [
+    "T",
+    "build_text_length_error",
+    "build_upload_validation_error",
+    "enforce_text_length",
+    "current_principal_id",
+    "resolve_idempotency_scope",
+    "build_job_urls",
+    "build_job_snapshot_payload",
+    "get_job_snapshot_or_raise",
+    "build_idempotency_fingerprint",
+    "create_custom_job_submission_from_openai",
+    "create_custom_job_submission_from_custom",
+    "create_design_job_submission",
+    "validate_clone_upload",
+    "build_clone_staged_path",
+    "stage_clone_job_submission",
+    "run_inference_with_timeout",
+    "register_tts_routes",
+]

@@ -1,3 +1,30 @@
+# FILE: server/api/errors.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Map domain errors to HTTP error responses with structured JSON bodies.
+#   SCOPE: Exception handlers for all CoreError subclasses
+#   DEPENDS: M-ERRORS
+#   LINKS: M-SERVER
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   register_exception_handlers - Register mapped exception handlers on FastAPI app
+#   build_exception_mappings - Build exception-to-error-descriptor mappings
+#   map_exception_to_descriptor - Convert exceptions into public API descriptors
+#   build_generation_error_descriptor - Build generation-specific API error descriptors
+#   build_error_details - Build sanitized public error details from exceptions
+#   build_retry_after_headers - Build Retry-After headers from retry hints
+#   build_model_not_available_details - Build model-not-available error details
+#   sanitize_validation_errors - Sanitize FastAPI validation errors for public responses
+#   sanitize_public_error_details - Sanitize structured error detail payloads for public responses
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import logging
@@ -35,16 +62,39 @@ from server.api.responses import build_error_response
 from server.bootstrap import ServerSettings
 
 
-_PATH_KEY_RE = re.compile(r"(^|_)(path|paths|dir|dirs|directory|directories|file|filename|filenames)$", re.IGNORECASE)
-_PATH_VALUE_RE = re.compile(r"([A-Za-z]:[\\/]|/Users/|/tmp/|/var/|/private/|\.uploads/|\.outputs/|\.models/|\.voices/)")
+_PATH_KEY_RE = re.compile(
+    r"(^|_)(path|paths|dir|dirs|directory|directories|file|filename|filenames)$",
+    re.IGNORECASE,
+)
+_PATH_VALUE_RE = re.compile(
+    r"([A-Za-z]:[\\/]|/Users/|/tmp/|/var/|/private/|\.uploads/|\.outputs/|\.models/|\.voices/)"
+)
 
 
-
+# START_CONTRACT: register_exception_handlers
+#   PURPOSE: Register request validation, mapped domain error, and fallback exception handlers on the FastAPI app.
+#   INPUTS: { app: FastAPI - application to attach handlers to, logger: Any - structured logger used by mapped handlers }
+#   OUTPUTS: { None - handlers are attached in place }
+#   SIDE_EFFECTS: Mutates FastAPI exception handler registry
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: register_exception_handlers
 def register_exception_handlers(app: FastAPI, logger) -> None:
+    # START_BLOCK_RESOLVE_EXCEPTION_MAPPINGS
     mappings = app.state.exception_mappings
+    # END_BLOCK_RESOLVE_EXCEPTION_MAPPINGS
 
+    # START_BLOCK_REGISTER_VALIDATION_HANDLER
     @app.exception_handler(RequestValidationError)
-    async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # START_CONTRACT: handle_validation_error
+    #   PURPOSE: Convert FastAPI request validation errors into the public API error response shape.
+    #   INPUTS: { request: Request - failed request context, exc: RequestValidationError - validation error raised by FastAPI }
+    #   OUTPUTS: { JSONResponse - standardized validation error response }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-SERVER, M-ERRORS
+    # END_CONTRACT: handle_validation_error
+    async def handle_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         descriptor = ErrorDescriptor(
             status_code=422,
             code="validation_error",
@@ -53,14 +103,37 @@ def register_exception_handlers(app: FastAPI, logger) -> None:
         )
         return build_error_response(request=request, descriptor=descriptor)
 
+    # END_BLOCK_REGISTER_VALIDATION_HANDLER
+
+    # START_BLOCK_REGISTER_HANDLERS
     for exception_type in mappings:
 
         @app.exception_handler(exception_type)
-        async def handle_mapped_error(request: Request, exc: Exception, _exception_type=exception_type) -> JSONResponse:
-            descriptor = map_exception_to_descriptor(request, exc, mappings[_exception_type], logger)
+        # START_CONTRACT: handle_mapped_error
+        #   PURPOSE: Convert known mapped domain errors into standardized API error responses.
+        #   INPUTS: { request: Request - failed request context, exc: Exception - mapped exception instance, _exception_type: type[Exception] - captured exception class for handler binding }
+        #   OUTPUTS: { JSONResponse - standardized mapped error response }
+        #   SIDE_EFFECTS: Emits structured error mapping logs through the shared logger
+        #   LINKS: M-SERVER, M-ERRORS
+        # END_CONTRACT: handle_mapped_error
+        async def handle_mapped_error(
+            request: Request, exc: Exception, _exception_type=exception_type
+        ) -> JSONResponse:
+            descriptor = map_exception_to_descriptor(
+                request, exc, mappings[_exception_type], logger
+            )
             return build_error_response(request=request, descriptor=descriptor)
+    # END_BLOCK_REGISTER_HANDLERS
 
+    # START_BLOCK_REGISTER_FALLBACK_HANDLER
     @app.exception_handler(Exception)
+    # START_CONTRACT: handle_unexpected_error
+    #   PURPOSE: Convert unexpected uncaught exceptions into the generic internal error response.
+    #   INPUTS: { request: Request - failed request context, exc: Exception - uncaught exception instance }
+    #   OUTPUTS: { JSONResponse - generic internal server error response }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-SERVER, M-ERRORS
+    # END_CONTRACT: handle_unexpected_error
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
         descriptor = ErrorDescriptor(
             status_code=500,
@@ -70,9 +143,19 @@ def register_exception_handlers(app: FastAPI, logger) -> None:
         )
         return build_error_response(request=request, descriptor=descriptor)
 
+    # END_BLOCK_REGISTER_FALLBACK_HANDLER
 
 
-def build_exception_mappings(settings: ServerSettings) -> dict[type[Exception], ExceptionMapping]:
+# START_CONTRACT: build_exception_mappings
+#   PURPOSE: Build the exception-to-error-descriptor mapping table used by API handlers.
+#   INPUTS: { settings: ServerSettings - server settings supplying status-code policy values }
+#   OUTPUTS: { dict[type[Exception], ExceptionMapping] - mapping of exception classes to descriptor builders }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_exception_mappings
+def build_exception_mappings(
+    settings: ServerSettings,
+) -> dict[type[Exception], ExceptionMapping]:
     return {
         ModelNotAvailableError: ExceptionMapping(
             error_type=ModelNotAvailableError,
@@ -242,13 +325,21 @@ def build_exception_mappings(settings: ServerSettings) -> dict[type[Exception], 
     }
 
 
-
-def map_exception_to_descriptor(request: Request, exc: Exception, mapping: ExceptionMapping, logger) -> ErrorDescriptor:
+# START_CONTRACT: map_exception_to_descriptor
+#   PURPOSE: Translate a raised exception into a public error descriptor and emit a structured log record.
+#   INPUTS: { request: Request - failed request context, exc: Exception - raised exception instance, mapping: ExceptionMapping - descriptor builder mapping, logger: Any - structured logger for error events }
+#   OUTPUTS: { ErrorDescriptor - transport-ready public error descriptor }
+#   SIDE_EFFECTS: Emits structured mapped-error logs
+#   LINKS: M-SERVER, M-ERRORS, M-OBSERVABILITY
+# END_CONTRACT: map_exception_to_descriptor
+def map_exception_to_descriptor(
+    request: Request, exc: Exception, mapping: ExceptionMapping, logger
+) -> ErrorDescriptor:
     descriptor = mapping.builder(exc)
     log_event(
         logger,
         level=logging.ERROR,
-        event="http.error.mapped",
+        event="[ErrorHandlers][map_exception_to_descriptor][MAP_EXCEPTION_TO_DESCRIPTOR]",
         message="Mapped exception to API error response",
         path=request.url.path,
         error_type=type(exc).__name__,
@@ -260,7 +351,13 @@ def map_exception_to_descriptor(request: Request, exc: Exception, mapping: Excep
     return descriptor
 
 
-
+# START_CONTRACT: build_generation_error_descriptor
+#   PURPOSE: Build the public error descriptor for synthesis generation failures.
+#   INPUTS: { exc: TTSGenerationError - generation failure exception }
+#   OUTPUTS: { ErrorDescriptor - API error descriptor for failed generation }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_generation_error_descriptor
 def build_generation_error_descriptor(exc: TTSGenerationError) -> ErrorDescriptor:
     details = build_error_details(exc, default_reason=str(exc))
     return ErrorDescriptor(
@@ -271,7 +368,13 @@ def build_generation_error_descriptor(exc: TTSGenerationError) -> ErrorDescripto
     )
 
 
-
+# START_CONTRACT: build_error_details
+#   PURPOSE: Convert exception context into sanitized public error details.
+#   INPUTS: { exc: Exception - exception carrying optional public context, default_reason: str - fallback reason when context is absent }
+#   OUTPUTS: { dict[str, object] - sanitized public error detail payload }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_error_details
 def build_error_details(exc: Exception, *, default_reason: str) -> dict[str, object]:
     context = getattr(exc, "context", None)
     if context is not None and hasattr(context, "to_dict"):
@@ -279,14 +382,26 @@ def build_error_details(exc: Exception, *, default_reason: str) -> dict[str, obj
     return sanitize_public_error_details({"reason": default_reason})
 
 
-
+# START_CONTRACT: build_retry_after_headers
+#   PURPOSE: Build retry-related HTTP headers for rate-limit and quota errors.
+#   INPUTS: { retry_after_seconds: int | None - retry delay in seconds if available }
+#   OUTPUTS: { dict[str, str] | None - response headers containing Retry-After when applicable }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: build_retry_after_headers
 def build_retry_after_headers(retry_after_seconds: int | None) -> dict[str, str] | None:
     if retry_after_seconds is None:
         return None
     return {"Retry-After": str(retry_after_seconds)}
 
 
-
+# START_CONTRACT: build_model_not_available_details
+#   PURPOSE: Build sanitized public error details for missing-model failures.
+#   INPUTS: { exc: ModelNotAvailableError - missing model exception }
+#   OUTPUTS: { dict[str, object] - public error details including model id when available }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: build_model_not_available_details
 def build_model_not_available_details(exc: ModelNotAvailableError) -> dict[str, object]:
     details = build_error_details(exc, default_reason=str(exc))
     if exc.model_name is not None and "model" not in details:
@@ -294,18 +409,32 @@ def build_model_not_available_details(exc: ModelNotAvailableError) -> dict[str, 
     return details
 
 
-
+# START_CONTRACT: sanitize_validation_errors
+#   PURPOSE: Normalize request validation error payloads into JSON-serializable public structures.
+#   INPUTS: { errors: list[dict] - raw validation error items from FastAPI/Pydantic }
+#   OUTPUTS: { list[dict] - sanitized validation error items }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER
+# END_CONTRACT: sanitize_validation_errors
 def sanitize_validation_errors(errors: list[dict]) -> list[dict]:
     sanitized: list[dict] = []
     for item in errors:
         normalized = dict(item)
         if "ctx" in normalized and isinstance(normalized["ctx"], dict):
-            normalized["ctx"] = {key: str(value) for key, value in normalized["ctx"].items()}
+            normalized["ctx"] = {
+                key: str(value) for key, value in normalized["ctx"].items()
+            }
         sanitized.append(normalized)
     return sanitized
 
 
-
+# START_CONTRACT: sanitize_public_error_details
+#   PURPOSE: Recursively sanitize public error detail values to avoid leaking local filesystem paths.
+#   INPUTS: { value: Any - nested error detail payload }
+#   OUTPUTS: { Any - sanitized payload safe for public API responses }
+#   SIDE_EFFECTS: none
+#   LINKS: M-SERVER, M-ERRORS
+# END_CONTRACT: sanitize_public_error_details
 def sanitize_public_error_details(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
@@ -327,10 +456,8 @@ def sanitize_public_error_details(value: Any) -> Any:
     return value
 
 
-
 def _is_path_key(key: str) -> bool:
     return bool(_PATH_KEY_RE.search(key))
-
 
 
 def _looks_like_local_path(value: str) -> bool:
@@ -343,12 +470,10 @@ def _looks_like_local_path(value: str) -> bool:
     return path.is_absolute() and len(path.parts) > 1
 
 
-
 def _sanitize_path_value(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     return PurePath(value).name or value
-
 
 
 def _sanitize_path_string(value: str) -> str:
@@ -359,3 +484,15 @@ def _sanitize_path_string(value: str) -> str:
             continue
         sanitized = sanitized.replace(normalized, _sanitize_path_value(normalized))
     return sanitized
+
+__all__ = [
+    "register_exception_handlers",
+    "build_exception_mappings",
+    "map_exception_to_descriptor",
+    "build_generation_error_descriptor",
+    "build_error_details",
+    "build_retry_after_headers",
+    "build_model_not_available_details",
+    "sanitize_validation_errors",
+    "sanitize_public_error_details",
+]
