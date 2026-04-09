@@ -1,3 +1,26 @@
+# FILE: core/metrics.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Collect and expose counters, gauges, and timing metrics for runtime operations.
+#   SCOPE: MetricsCollector interface, InMemoryMetricsCollector, OperationalMetricsRegistry facade
+#   DEPENDS: none
+#   LINKS: M-METRICS
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   OperationalMetricsRegistry - Facade for operational metric queries
+#   MetricsCollector - Abstract metric collection interface
+#   InMemoryMetricsCollector - Thread-safe in-memory metric storage
+#   NoOpMetricsCollector - No-op stub for testing
+#   DEFAULT_METRICS_COLLECTOR - Module-level default collector instance
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -10,6 +33,13 @@ from typing import Any
 MetricTags = tuple[tuple[str, str], ...]
 
 
+# START_CONTRACT: MetricSummary
+#   PURPOSE: Represent a snapshot of collected counters, gauges, and timing series.
+#   INPUTS: { counters: dict[str, dict[str, Any]] - Aggregated counter series, gauges: dict[str, dict[str, Any]] - Aggregated gauge series, timings: dict[str, dict[str, Any]] - Aggregated timing series }
+#   OUTPUTS: { instance - Immutable metrics snapshot }
+#   SIDE_EFFECTS: none
+#   LINKS: M-METRICS
+# END_CONTRACT: MetricSummary
 @dataclass(frozen=True)
 class MetricSummary:
     counters: dict[str, dict[str, Any]]
@@ -24,17 +54,30 @@ class MetricSummary:
         }
 
 
+# START_CONTRACT: MetricsCollector
+#   PURPOSE: Define the abstract contract for counter, gauge, and timing collection backends.
+#   INPUTS: {}
+#   OUTPUTS: { instance - Abstract metric collection interface }
+#   SIDE_EFFECTS: none
+#   LINKS: M-METRICS
+# END_CONTRACT: MetricsCollector
 class MetricsCollector(ABC):
     @abstractmethod
-    def increment(self, name: str, value: int = 1, *, tags: dict[str, str] | None = None) -> None:
+    def increment(
+        self, name: str, value: int = 1, *, tags: dict[str, str] | None = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def set_gauge(self, name: str, value: int | float, *, tags: dict[str, str] | None = None) -> None:
+    def set_gauge(
+        self, name: str, value: int | float, *, tags: dict[str, str] | None = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def observe_timing(self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None) -> None:
+    def observe_timing(
+        self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -42,20 +85,40 @@ class MetricsCollector(ABC):
         raise NotImplementedError
 
 
+# START_CONTRACT: NoOpMetricsCollector
+#   PURPOSE: Provide a metrics collector implementation that discards all observations.
+#   INPUTS: {}
+#   OUTPUTS: { instance - No-op metrics collector }
+#   SIDE_EFFECTS: none
+#   LINKS: M-METRICS
+# END_CONTRACT: NoOpMetricsCollector
 class NoOpMetricsCollector(MetricsCollector):
-    def increment(self, name: str, value: int = 1, *, tags: dict[str, str] | None = None) -> None:
+    def increment(
+        self, name: str, value: int = 1, *, tags: dict[str, str] | None = None
+    ) -> None:
         return
 
-    def set_gauge(self, name: str, value: int | float, *, tags: dict[str, str] | None = None) -> None:
+    def set_gauge(
+        self, name: str, value: int | float, *, tags: dict[str, str] | None = None
+    ) -> None:
         return
 
-    def observe_timing(self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None) -> None:
+    def observe_timing(
+        self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None
+    ) -> None:
         return
 
     def snapshot(self) -> MetricSummary:
         return MetricSummary(counters={}, gauges={}, timings={})
 
 
+# START_CONTRACT: InMemoryMetricsCollector
+#   PURPOSE: Collect counters, gauges, and timings in process-local thread-safe memory.
+#   INPUTS: {}
+#   OUTPUTS: { instance - In-memory metrics collector }
+#   SIDE_EFFECTS: Mutates in-memory metric series stored on the collector instance
+#   LINKS: M-METRICS
+# END_CONTRACT: InMemoryMetricsCollector
 class InMemoryMetricsCollector(MetricsCollector):
     def __init__(self) -> None:
         self._lock = Lock()
@@ -65,17 +128,23 @@ class InMemoryMetricsCollector(MetricsCollector):
             lambda: {"count": 0.0, "sum_ms": 0.0, "max_ms": 0.0, "last_ms": 0.0}
         )
 
-    def increment(self, name: str, value: int = 1, *, tags: dict[str, str] | None = None) -> None:
+    def increment(
+        self, name: str, value: int = 1, *, tags: dict[str, str] | None = None
+    ) -> None:
         key = (name, _normalize_tags(tags))
         with self._lock:
             self._counters[key] += value
 
-    def set_gauge(self, name: str, value: int | float, *, tags: dict[str, str] | None = None) -> None:
+    def set_gauge(
+        self, name: str, value: int | float, *, tags: dict[str, str] | None = None
+    ) -> None:
         key = (name, _normalize_tags(tags))
         with self._lock:
             self._gauges[key] = float(value)
 
-    def observe_timing(self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None) -> None:
+    def observe_timing(
+        self, name: str, duration_ms: float, *, tags: dict[str, str] | None = None
+    ) -> None:
         key = (name, _normalize_tags(tags))
         with self._lock:
             bucket = self._timings[key]
@@ -95,6 +164,13 @@ class InMemoryMetricsCollector(MetricsCollector):
 DEFAULT_METRICS_COLLECTOR = InMemoryMetricsCollector()
 
 
+# START_CONTRACT: OperationalMetricsRegistry
+#   PURPOSE: Expose higher-level readiness and execution summaries over a metrics collector.
+#   INPUTS: { collector: MetricsCollector | None - Optional collector override used for metric aggregation }
+#   OUTPUTS: { instance - Metrics facade for operational reporting }
+#   SIDE_EFFECTS: none
+#   LINKS: M-METRICS
+# END_CONTRACT: OperationalMetricsRegistry
 class OperationalMetricsRegistry:
     def __init__(self, collector: MetricsCollector | None = None) -> None:
         self._collector = collector or DEFAULT_METRICS_COLLECTOR
@@ -130,8 +206,12 @@ class OperationalMetricsRegistry:
                 "miss": _split_counter_by_tag(counters, "models.cache.miss", "backend"),
             },
             "load": {
-                "failures": _split_counter_by_tag(counters, "models.load.failed", "backend"),
-                "duration_ms": _split_timing_by_tag(timings, "models.load.duration_ms", "backend"),
+                "failures": _split_counter_by_tag(
+                    counters, "models.load.failed", "backend"
+                ),
+                "duration_ms": _split_timing_by_tag(
+                    timings, "models.load.duration_ms", "backend"
+                ),
             },
         }
 
@@ -148,7 +228,9 @@ def _normalize_tags(tags: dict[str, str] | None) -> MetricTags:
     return tuple(sorted((str(key), str(value)) for key, value in tags.items()))
 
 
-def _group_metric_series(series: dict[tuple[str, MetricTags], int | float]) -> dict[str, dict[str, Any]]:
+def _group_metric_series(
+    series: dict[tuple[str, MetricTags], int | float],
+) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for (name, tags), value in series.items():
         grouped.setdefault(name, {"total": 0, "series": []})
@@ -159,10 +241,14 @@ def _group_metric_series(series: dict[tuple[str, MetricTags], int | float]) -> d
     return grouped
 
 
-def _group_timing_series(series: dict[tuple[str, MetricTags], dict[str, float]]) -> dict[str, dict[str, Any]]:
+def _group_timing_series(
+    series: dict[tuple[str, MetricTags], dict[str, float]],
+) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for (name, tags), value in series.items():
-        grouped.setdefault(name, {"count": 0, "sum_ms": 0.0, "max_ms": 0.0, "series": []})
+        grouped.setdefault(
+            name, {"count": 0, "sum_ms": 0.0, "max_ms": 0.0, "series": []}
+        )
         grouped[name]["count"] += int(value["count"])
         grouped[name]["sum_ms"] += value["sum_ms"]
         grouped[name]["max_ms"] = max(grouped[name]["max_ms"], value["max_ms"])
@@ -172,14 +258,18 @@ def _group_timing_series(series: dict[tuple[str, MetricTags], dict[str, float]])
                 "count": int(value["count"]),
                 "sum_ms": round(value["sum_ms"], 3),
                 "max_ms": round(value["max_ms"], 3),
-                "avg_ms": round(value["sum_ms"] / value["count"], 3) if value["count"] else 0.0,
+                "avg_ms": round(value["sum_ms"] / value["count"], 3)
+                if value["count"]
+                else 0.0,
                 "last_ms": round(value["last_ms"], 3),
             }
         )
     for item in grouped.values():
         item["sum_ms"] = round(item["sum_ms"], 3)
         item["max_ms"] = round(item["max_ms"], 3)
-        item["avg_ms"] = round(item["sum_ms"] / item["count"], 3) if item["count"] else 0.0
+        item["avg_ms"] = (
+            round(item["sum_ms"] / item["count"], 3) if item["count"] else 0.0
+        )
         item["series"].sort(key=lambda entry: sorted(entry["tags"].items()))
     return grouped
 
@@ -196,7 +286,9 @@ def _gauge_value(gauges: dict[str, dict[str, Any]], name: str) -> int:
     return int(bucket["total"])
 
 
-def _split_counter_by_tag(counters: dict[str, dict[str, Any]], name: str, tag_name: str) -> dict[str, int]:
+def _split_counter_by_tag(
+    counters: dict[str, dict[str, Any]], name: str, tag_name: str
+) -> dict[str, int]:
     bucket = counters.get(name)
     if bucket is None:
         return {}
@@ -206,7 +298,9 @@ def _split_counter_by_tag(counters: dict[str, dict[str, Any]], name: str, tag_na
     return values
 
 
-def _split_timing_by_tag(timings: dict[str, dict[str, Any]], name: str, tag_name: str) -> dict[str, dict[str, Any]]:
+def _split_timing_by_tag(
+    timings: dict[str, dict[str, Any]], name: str, tag_name: str
+) -> dict[str, dict[str, Any]]:
     bucket = timings.get(name)
     if bucket is None:
         return {}

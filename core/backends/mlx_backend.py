@@ -1,3 +1,25 @@
+# FILE: core/backends/mlx_backend.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Implement TTS inference using Apple Silicon MLX framework.
+#   SCOPE: MLXBackend class with synthesize_custom/design/clone, model loading, caching
+#   DEPENDS: M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS
+#   LINKS: M-BACKENDS
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   LOGGER - Module logger for MLX backend events
+#   REQUIRED_QWEN3_TALKER_FIELDS - Required talker config fields for MLX normalization
+#   QWEN3_TOKENIZER_ARTIFACTS - Tokenizer artifacts required by MLX runtime models
+#   MLXBackend - Apple Silicon MLX inference backend
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, function contracts, semantic blocks, and migrated log events to block-reference format]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import json
@@ -53,6 +75,13 @@ QWEN3_TOKENIZER_ARTIFACTS = (
 )
 
 
+# START_CONTRACT: MLXBackend
+#   PURPOSE: Provide the Apple Silicon MLX implementation of the shared TTS backend contract.
+#   INPUTS: { models_dir: Path - Root directory containing MLX model folders, metrics: OperationalMetricsRegistry | None - Optional metrics facade for cache and load observations }
+#   OUTPUTS: { instance - MLX backend with process-local model cache }
+#   SIDE_EFFECTS: none
+#   LINKS: M-BACKENDS
+# END_CONTRACT: MLXBackend
 class MLXBackend(TTSBackend):
     key = "mlx"
     label = "MLX Apple Silicon"
@@ -69,6 +98,13 @@ class MLXBackend(TTSBackend):
         ] = {}
         self._metrics = metrics or OperationalMetricsRegistry()
 
+    # START_CONTRACT: capabilities
+    #   PURPOSE: Describe the synthesis features and platform constraints supported by the MLX backend.
+    #   INPUTS: {}
+    #   OUTPUTS: { BackendCapabilitySet - Capability descriptor for the MLX backend }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: capabilities
     def capabilities(self) -> BackendCapabilitySet:
         return BackendCapabilitySet(
             supports_custom=True,
@@ -82,12 +118,33 @@ class MLXBackend(TTSBackend):
             platforms=("darwin",),
         )
 
+    # START_CONTRACT: is_available
+    #   PURPOSE: Report whether MLX runtime dependencies are importable in the current environment.
+    #   INPUTS: {}
+    #   OUTPUTS: { bool - True when MLX runtime dependencies are available }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: is_available
     def is_available(self) -> bool:
         return load_model is not None and generate_audio is not None
 
+    # START_CONTRACT: supports_platform
+    #   PURPOSE: Report whether the current platform is supported by the MLX backend.
+    #   INPUTS: {}
+    #   OUTPUTS: { bool - True on supported Apple Silicon Darwin environments }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: supports_platform
     def supports_platform(self) -> bool:
         return platform.system().lower() == "darwin"
 
+    # START_CONTRACT: resolve_model_path
+    #   PURPOSE: Resolve the effective MLX model directory, including Hugging Face snapshot layouts.
+    #   INPUTS: { folder_name: str - Model directory name from the manifest }
+    #   OUTPUTS: { Path | None - Resolved model directory when present }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: resolve_model_path
     def resolve_model_path(self, folder_name: str) -> Path | None:
         full_path = self.models_dir / folder_name
         if not full_path.exists():
@@ -105,7 +162,15 @@ class MLXBackend(TTSBackend):
 
         return full_path
 
+    # START_CONTRACT: load_model
+    #   PURPOSE: Load or reuse a cached MLX runtime model for the provided specification.
+    #   INPUTS: { spec: ModelSpec - Model specification to load }
+    #   OUTPUTS: { LoadedModelHandle - Loaded MLX model handle }
+    #   SIDE_EFFECTS: May normalize model config, allocate runtime resources, update in-memory cache, emit logs, and record metrics
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: load_model
     def load_model(self, spec: ModelSpec) -> LoadedModelHandle:
+        # START_BLOCK_CHECK_CACHE
         model_path = self.resolve_model_path(spec.folder)
         if model_path is None:
             raise ModelLoadError(
@@ -136,7 +201,7 @@ class MLXBackend(TTSBackend):
                 log_event(
                     LOGGER,
                     level=20,
-                    event="mlx_backend.load.completed",
+                    event="[MLXBackend][load_model][BLOCK_CHECK_CACHE]",
                     message="MLX model runtime loaded",
                     model=spec.api_name,
                     mode=spec.mode,
@@ -149,14 +214,24 @@ class MLXBackend(TTSBackend):
                 self._metrics.collector.increment(
                     "models.cache.hit", tags={"backend": self.key}
                 )
+        # END_BLOCK_CHECK_CACHE
 
+        # START_BLOCK_LOAD_FROM_DISK
         return LoadedModelHandle(
             spec=spec,
             runtime_model=runtime_model,
             resolved_path=model_path,
             backend_key=self.key,
         )
+        # END_BLOCK_LOAD_FROM_DISK
 
+    # START_CONTRACT: inspect_model
+    #   PURPOSE: Inspect MLX model availability, artifact completeness, cache state, and runtime readiness.
+    #   INPUTS: { spec: ModelSpec - Model specification to inspect }
+    #   OUTPUTS: { dict[str, Any] - Structured model inspection details }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: inspect_model
     def inspect_model(self, spec: ModelSpec) -> dict[str, Any]:
         resolved_path = self.resolve_model_path(spec.folder)
         available = resolved_path is not None
@@ -209,6 +284,13 @@ class MLXBackend(TTSBackend):
             "capabilities": self.capabilities().to_dict(),
         }
 
+    # START_CONTRACT: readiness_diagnostics
+    #   PURPOSE: Report MLX backend availability and readiness diagnostics for selection and health checks.
+    #   INPUTS: {}
+    #   OUTPUTS: { BackendDiagnostics - Structured MLX readiness diagnostics }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: readiness_diagnostics
     def readiness_diagnostics(self) -> BackendDiagnostics:
         reason = None
         if not self.supports_platform():
@@ -234,6 +316,13 @@ class MLXBackend(TTSBackend):
             },
         )
 
+    # START_CONTRACT: cache_diagnostics
+    #   PURPOSE: Report cached MLX model handles and any normalized runtime directories.
+    #   INPUTS: {}
+    #   OUTPUTS: { dict[str, Any] - Structured cache diagnostics for MLX models }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: cache_diagnostics
     def cache_diagnostics(self) -> dict[str, Any]:
         loaded_models = []
         for folder in sorted(self._cache):
@@ -261,6 +350,13 @@ class MLXBackend(TTSBackend):
             "loaded_models": loaded_models,
         }
 
+    # START_CONTRACT: preload_models
+    #   PURPOSE: Preload a set of MLX model specifications into the backend cache.
+    #   INPUTS: { specs: tuple[ModelSpec, ...] - Model specifications to preload }
+    #   OUTPUTS: { dict[str, Any] - Structured preload outcome summary }
+    #   SIDE_EFFECTS: Loads model runtimes, updates in-memory cache, and records load outcomes
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: preload_models
     def preload_models(self, specs: tuple[ModelSpec, ...]) -> dict[str, Any]:
         loaded_model_ids: list[str] = []
         failed_model_ids: list[str] = []
@@ -289,6 +385,13 @@ class MLXBackend(TTSBackend):
             "errors": errors,
         }
 
+    # START_CONTRACT: synthesize_custom
+    #   PURPOSE: Generate custom-voice audio through the MLX runtime using speaker and instruction inputs.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded MLX model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, speaker: str - Speaker preset or identifier, instruct: str - Additional generation instruction, speed: float - Playback speed modifier }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs MLX inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_custom
     def synthesize_custom(
         self,
         handle: LoadedModelHandle,
@@ -300,6 +403,9 @@ class MLXBackend(TTSBackend):
         instruct: str,
         speed: float,
     ) -> None:
+        # START_BLOCK_RESOLVE_MODEL
+        # END_BLOCK_RESOLVE_MODEL
+        # START_BLOCK_RUN_MLX_INFERENCE
         self._generate(
             handle,
             text=text,
@@ -309,7 +415,17 @@ class MLXBackend(TTSBackend):
             instruct=instruct,
             speed=speed,
         )
+        # END_BLOCK_RUN_MLX_INFERENCE
+        # START_BLOCK_WRITE_OUTPUT
+        # END_BLOCK_WRITE_OUTPUT
 
+    # START_CONTRACT: synthesize_design
+    #   PURPOSE: Generate voice-design audio through the MLX runtime from a voice description prompt.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded MLX model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, voice_description: str - Natural language description of the target voice }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs MLX inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_design
     def synthesize_design(
         self,
         handle: LoadedModelHandle,
@@ -327,6 +443,13 @@ class MLXBackend(TTSBackend):
             instruct=voice_description,
         )
 
+    # START_CONTRACT: synthesize_clone
+    #   PURPOSE: Generate cloned-voice audio through the MLX runtime using prepared reference audio.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded MLX model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, ref_audio_path: Path - Prepared reference audio path, ref_text: str | None - Optional transcription for the reference audio }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs MLX inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_clone
     def synthesize_clone(
         self,
         handle: LoadedModelHandle,
@@ -337,14 +460,20 @@ class MLXBackend(TTSBackend):
         ref_audio_path: Path,
         ref_text: str | None,
     ) -> None:
+        # START_BLOCK_PREPARE_CLONE_INPUT
+        prepared_ref_audio = str(ref_audio_path)
+        prepared_ref_text = ref_text or "."
+        # END_BLOCK_PREPARE_CLONE_INPUT
+        # START_BLOCK_RUN_CLONE_INFERENCE
         self._generate(
             handle,
             text=text,
             output_dir=output_dir,
             lang_code=language,
-            ref_audio=str(ref_audio_path),
-            ref_text=ref_text or ".",
+            ref_audio=prepared_ref_audio,
+            ref_text=prepared_ref_text,
         )
+        # END_BLOCK_RUN_CLONE_INFERENCE
 
     def _generate(
         self,
@@ -388,6 +517,7 @@ class MLXBackend(TTSBackend):
     ) -> tuple[Any, Path, bool]:
         timer = Timer()
         direct_error: Exception | None = None
+        # START_BLOCK_DIRECT_RUNTIME_LOAD
         try:
             runtime_model = self._invoke_runtime_loader(
                 spec=spec,
@@ -414,7 +544,7 @@ class MLXBackend(TTSBackend):
             log_event(
                 LOGGER,
                 level=20,
-                event="mlx_backend.load.normalization_retry",
+                event="[MLXBackend][_load_runtime_model][BLOCK_DIRECT_RUNTIME_LOAD]",
                 message="Retrying MLX model load with normalized Qwen3-TTS config",
                 model=spec.api_name,
                 mode=spec.mode,
@@ -422,7 +552,9 @@ class MLXBackend(TTSBackend):
                 model_path=str(model_path),
                 error=str(exc),
             )
+        # END_BLOCK_DIRECT_RUNTIME_LOAD
 
+        # START_BLOCK_NORMALIZE_RUNTIME_LAYOUT
         runtime_path = self._prepare_runtime_model_path(
             spec=spec, model_path=model_path
         )
@@ -446,8 +578,11 @@ class MLXBackend(TTSBackend):
                 exc=exc,
                 fallback_reason=None if direct_error is None else str(direct_error),
             ) from exc
+        # END_BLOCK_NORMALIZE_RUNTIME_LAYOUT
+        # START_BLOCK_RETURN_RUNTIME_HANDLE
         self._observe_load_duration(timer.elapsed_ms)
         return runtime_model, runtime_path, True
+        # END_BLOCK_RETURN_RUNTIME_HANDLE
 
     def _invoke_runtime_loader(
         self,
@@ -460,7 +595,7 @@ class MLXBackend(TTSBackend):
         log_event(
             LOGGER,
             level=20,
-            event="mlx_backend.load.started",
+            event="[MLXBackend][_invoke_runtime_loader][INVOKE_RUNTIME_LOADER]",
             message="Loading MLX model runtime",
             model=spec.api_name,
             mode=spec.mode,
@@ -533,7 +668,7 @@ class MLXBackend(TTSBackend):
         log_event(
             LOGGER,
             level=40,
-            event="mlx_backend.load.runtime_resources_invalid",
+            event="[MLXBackend][_validate_runtime_resources][VALIDATE_RUNTIME_RESOURCES]",
             message="MLX runtime loaded without required tokenizer resources",
             **details,
         )
@@ -574,7 +709,7 @@ class MLXBackend(TTSBackend):
         log_event(
             LOGGER,
             level=20,
-            event="mlx_backend.load.resources_rebound",
+            event="[MLXBackend][_rebind_runtime_resources][REBIND_RUNTIME_RESOURCES]",
             message="Rebound MLX runtime resources to original model path",
             model=spec.api_name,
             mode=spec.mode,
@@ -597,7 +732,7 @@ class MLXBackend(TTSBackend):
         log_event(
             LOGGER,
             level=40,
-            event="mlx_backend.load.failed",
+            event="[MLXBackend][_wrap_runtime_load_error][WRAP_RUNTIME_LOAD_ERROR]",
             message="MLX model runtime load failed",
             model=spec.api_name,
             mode=spec.mode,
@@ -622,6 +757,13 @@ class MLXBackend(TTSBackend):
             details["fallback_reason"] = fallback_reason
         return ModelLoadError("MLX runtime failed to load model", details=details)
 
+    # START_CONTRACT: metrics_summary
+    #   PURPOSE: Summarize MLX backend cache and model loading metrics.
+    #   INPUTS: {}
+    #   OUTPUTS: { dict[str, Any] - MLX backend metrics summary }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: metrics_summary
     def metrics_summary(self) -> dict[str, Any]:
         return self._metrics.model_summary()
 
@@ -759,7 +901,7 @@ class MLXBackend(TTSBackend):
         log_event(
             LOGGER,
             level=20,
-            event="mlx_backend.config.normalized",
+            event="[MLXBackend][_build_normalized_runtime_dir][BUILD_NORMALIZED_RUNTIME_DIR]",
             message="Created normalized MLX runtime directory for nested Qwen3-TTS config",
             model=spec.api_name,
             mode=spec.mode,
@@ -847,3 +989,10 @@ class MLXBackend(TTSBackend):
             "required_artifacts": list(requirements.keys()),
             "missing_artifacts": missing,
         }
+
+__all__ = [
+    "LOGGER",
+    "REQUIRED_QWEN3_TALKER_FIELDS",
+    "QWEN3_TOKENIZER_ARTIFACTS",
+    "MLXBackend",
+]

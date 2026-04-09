@@ -1,3 +1,39 @@
+# FILE: core/config.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Parse and validate environment-based runtime configuration for all components.
+#   SCOPE: CoreSettings dataclass, environment parsing helpers, typed settings dict
+#   DEPENDS: none
+#   LINKS: M-CONFIG
+#   ROLE: CONFIG
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   PROJECT_ROOT - Repository root directory used for default path resolution
+#   DEFAULT_MODELS_DIR - Default local models directory
+#   DEFAULT_OUTPUTS_DIR - Default generated outputs directory
+#   DEFAULT_VOICES_DIR - Default saved voices directory
+#   DEFAULT_UPLOAD_STAGING_DIR - Default upload staging directory
+#   LOCAL_JOB_EXECUTION_BACKEND - Default local async execution backend key
+#   LOCAL_JOB_METADATA_BACKEND - Default local job metadata backend key
+#   LOCAL_JOB_ARTIFACT_BACKEND - Default local job artifact backend key
+#   LOCAL_RATE_LIMIT_BACKEND - Default local rate limit backend key
+#   LOCAL_QUOTA_BACKEND - Default local quota backend key
+#   CoreSettings - Frozen dataclass holding all shared runtime settings
+#   CoreSettingsEnv - TypedDict describing parsed settings shape
+#   AuthMode - Literal type for authentication mode
+#   parse_core_settings_from_env - Parse environment variables into typed settings dict
+#   env_text - Read string from environment with default
+#   env_int - Read integer from environment with default
+#   env_bool - Read boolean from environment with default
+#   env_path - Read Path from environment with default
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import os
@@ -64,6 +100,13 @@ class CoreSettingsEnv(TypedDict):
     auto_play_cli: bool
 
 
+# START_CONTRACT: CoreSettings
+#   PURPOSE: Hold normalized shared runtime settings resolved from environment configuration.
+#   INPUTS: { models_dir: Path - Root directory for backend model assets, outputs_dir: Path - Directory for persisted generated audio, voices_dir: Path - Directory for reusable voice assets, mlx_models_dir: Path - MLX-specific model directory override, upload_staging_dir: Path - Temporary upload staging directory, model_manifest_path: Path - Manifest file describing enabled models, backend: str | None - Requested backend key override, backend_autoselect: bool - Whether backend selection may fall back automatically, model_preload_policy: str - Preload strategy for runtime model warming, model_preload_ids: tuple[str, ...] - Explicit model identifiers to preload, job_execution_backend: str - Selected async execution backend, job_metadata_backend: str - Selected job metadata store backend, job_artifact_backend: str - Selected job artifact store backend, auth_mode: AuthMode - Authentication policy selector, auth_static_bearer_token: str | None - Static bearer token secret, auth_static_bearer_principal_id: str | None - Principal bound to static bearer auth, auth_static_bearer_credential_id: str | None - Credential identifier for static bearer auth, rate_limit_enabled: bool - Enables request throttling policies, rate_limit_backend: str - Selected rate limiter backend, rate_limit_sync_tts_per_minute: int - Per-minute sync synthesis allowance, rate_limit_async_submit_per_minute: int - Per-minute async submission allowance, rate_limit_job_read_per_minute: int - Per-minute async job read allowance, rate_limit_job_cancel_per_minute: int - Per-minute async job cancel allowance, rate_limit_control_plane_per_minute: int - Per-minute control plane allowance, quota_enabled: bool - Enables quota enforcement, quota_backend: str - Selected quota backend, quota_compute_requests_per_window: int - Compute quota limit per window, quota_compute_window_seconds: int - Compute quota window size, quota_max_active_jobs_per_principal: int - Max active async jobs per principal, sample_rate: int - Target sample rate for normalized audio, filename_max_len: int - Max text snippet length in saved filenames, default_save_output: bool - Default persistence behavior for generated output, enable_streaming: bool - Streaming capability toggle, max_upload_size_bytes: int - Maximum accepted upload size, max_input_text_chars: int - Maximum request text length, request_timeout_seconds: int - Request timeout budget, inference_busy_status_code: int - HTTP status code for busy inference responses, auto_play_cli: bool - CLI auto playback toggle }
+#   OUTPUTS: { instance - Immutable runtime settings container }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: CoreSettings
 @dataclass(frozen=True)
 class CoreSettings:
     models_dir: Path
@@ -113,15 +156,36 @@ class CoreSettings:
         self.upload_staging_dir.mkdir(parents=True, exist_ok=True)
 
 
+# START_CONTRACT: env_text
+#   PURPOSE: Read a string environment variable with a provided default fallback.
+#   INPUTS: { name: str - Environment variable name to read, default: str - Fallback value when the variable is unset, environ: Mapping[str, str] | None - Optional environment mapping override }
+#   OUTPUTS: { str - Resolved string value from the environment or default }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: env_text
 def env_text(name: str, default: str, environ: Mapping[str, str] | None = None) -> str:
     env = os.environ if environ is None else environ
     return env.get(name, default)
 
 
+# START_CONTRACT: env_int
+#   PURPOSE: Read an integer environment variable while reusing shared text parsing behavior.
+#   INPUTS: { name: str - Environment variable name to read, default: int - Fallback integer when unset, environ: Mapping[str, str] | None - Optional environment mapping override }
+#   OUTPUTS: { int - Parsed integer value }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: env_int
 def env_int(name: str, default: int, environ: Mapping[str, str] | None = None) -> int:
     return int(env_text(name, str(default), environ))
 
 
+# START_CONTRACT: env_bool
+#   PURPOSE: Read a boolean environment variable using common truthy string coercion rules.
+#   INPUTS: { name: str - Environment variable name to read, default: bool - Fallback value when unset, environ: Mapping[str, str] | None - Optional environment mapping override }
+#   OUTPUTS: { bool - Parsed boolean value }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: env_bool
 def env_bool(
     name: str, default: bool, environ: Mapping[str, str] | None = None
 ) -> bool:
@@ -132,6 +196,13 @@ def env_bool(
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# START_CONTRACT: env_path
+#   PURPOSE: Read and resolve a filesystem path environment variable with a default path.
+#   INPUTS: { name: str - Environment variable name to read, default: Path - Fallback path when unset, environ: Mapping[str, str] | None - Optional environment mapping override }
+#   OUTPUTS: { Path - Absolute resolved filesystem path }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: env_path
 def env_path(
     name: str, default: Path, environ: Mapping[str, str] | None = None
 ) -> Path:
@@ -151,9 +222,17 @@ def _parse_csv_env(
     return tuple(values)
 
 
+# START_CONTRACT: parse_core_settings_from_env
+#   PURPOSE: Parse supported core environment variables into a typed settings payload.
+#   INPUTS: { environ: Mapping[str, str] | None - Optional environment mapping to parse instead of process env }
+#   OUTPUTS: { CoreSettingsEnv - Typed settings dictionary ready for CoreSettings construction }
+#   SIDE_EFFECTS: none
+#   LINKS: M-CONFIG
+# END_CONTRACT: parse_core_settings_from_env
 def parse_core_settings_from_env(
     environ: Mapping[str, str] | None = None,
 ) -> CoreSettingsEnv:
+    # START_BLOCK_PARSE_AUTH_SETTINGS
     backend = env_text("QWEN_TTS_BACKEND", "", environ).strip() or None
     auth_mode = env_text("QWEN_TTS_AUTH_MODE", "off", environ).strip().lower() or "off"
     if auth_mode not in {"off", "static_bearer"}:
@@ -169,6 +248,8 @@ def parse_core_settings_from_env(
         env_text("QWEN_TTS_AUTH_STATIC_BEARER_CREDENTIAL_ID", "", environ).strip()
         or None
     )
+    # END_BLOCK_PARSE_AUTH_SETTINGS
+    # START_BLOCK_PARSE_PATH_SETTINGS
     return {
         "models_dir": env_path("QWEN_TTS_MODELS_DIR", DEFAULT_MODELS_DIR, environ),
         "mlx_models_dir": env_path(
@@ -184,6 +265,8 @@ def parse_core_settings_from_env(
             PROJECT_ROOT / "core" / "models" / "manifest.v1.json",
             environ,
         ),
+        # END_BLOCK_PARSE_PATH_SETTINGS
+        # START_BLOCK_PARSE_RUNTIME_SETTINGS
         "backend": backend,
         "backend_autoselect": env_bool("QWEN_TTS_BACKEND_AUTOSELECT", True, environ),
         "model_preload_policy": env_text(
@@ -266,4 +349,26 @@ def parse_core_settings_from_env(
         "sample_rate": env_int("QWEN_TTS_SAMPLE_RATE", 24000, environ),
         "filename_max_len": env_int("QWEN_TTS_FILENAME_MAX_LEN", 20, environ),
         "auto_play_cli": env_bool("QWEN_TTS_AUTO_PLAY_CLI", True, environ),
+        # END_BLOCK_PARSE_RUNTIME_SETTINGS
     }
+
+__all__ = [
+    "PROJECT_ROOT",
+    "DEFAULT_MODELS_DIR",
+    "DEFAULT_OUTPUTS_DIR",
+    "DEFAULT_VOICES_DIR",
+    "DEFAULT_UPLOAD_STAGING_DIR",
+    "LOCAL_JOB_EXECUTION_BACKEND",
+    "LOCAL_JOB_METADATA_BACKEND",
+    "LOCAL_JOB_ARTIFACT_BACKEND",
+    "LOCAL_RATE_LIMIT_BACKEND",
+    "LOCAL_QUOTA_BACKEND",
+    "AuthMode",
+    "CoreSettingsEnv",
+    "CoreSettings",
+    "env_text",
+    "env_int",
+    "env_bool",
+    "env_path",
+    "parse_core_settings_from_env",
+]

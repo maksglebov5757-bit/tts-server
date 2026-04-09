@@ -1,3 +1,22 @@
+# FILE: core/backends/torch_backend.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Implement TTS inference using PyTorch framework.
+#   SCOPE: TorchBackend class with synthesize_custom/design/clone, model loading, caching
+#   DEPENDS: M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS
+#   LINKS: M-BACKENDS
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   TorchBackend - PyTorch CPU/CUDA inference backend
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import platform
@@ -28,6 +47,13 @@ else:
     QWEN_TTS_IMPORT_ERROR = None
 
 
+# START_CONTRACT: TorchBackend
+#   PURPOSE: Provide the PyTorch implementation of the shared TTS backend contract.
+#   INPUTS: { models_dir: Path - Root directory containing Torch model folders, metrics: OperationalMetricsRegistry | None - Optional metrics facade for cache and load observations }
+#   OUTPUTS: { instance - Torch backend with process-local model cache }
+#   SIDE_EFFECTS: none
+#   LINKS: M-BACKENDS
+# END_CONTRACT: TorchBackend
 class TorchBackend(TTSBackend):
     key = "torch"
     label = "PyTorch + Transformers"
@@ -40,6 +66,13 @@ class TorchBackend(TTSBackend):
         self._lock = Lock()
         self._metrics = metrics or OperationalMetricsRegistry()
 
+    # START_CONTRACT: capabilities
+    #   PURPOSE: Describe the synthesis features and platform coverage supported by the Torch backend.
+    #   INPUTS: {}
+    #   OUTPUTS: { BackendCapabilitySet - Capability descriptor for the Torch backend }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: capabilities
     def capabilities(self) -> BackendCapabilitySet:
         return BackendCapabilitySet(
             supports_custom=True,
@@ -53,12 +86,33 @@ class TorchBackend(TTSBackend):
             platforms=("linux", "windows", "darwin"),
         )
 
+    # START_CONTRACT: is_available
+    #   PURPOSE: Report whether Torch runtime dependencies are importable in the current environment.
+    #   INPUTS: {}
+    #   OUTPUTS: { bool - True when Torch runtime dependencies are available }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: is_available
     def is_available(self) -> bool:
         return torch is not None and Qwen3TTSModel is not None
 
+    # START_CONTRACT: supports_platform
+    #   PURPOSE: Report whether the current platform is supported by the Torch backend.
+    #   INPUTS: {}
+    #   OUTPUTS: { bool - True on supported Linux, Windows, or Darwin environments }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: supports_platform
     def supports_platform(self) -> bool:
         return platform.system().lower() in {"linux", "windows", "darwin"}
 
+    # START_CONTRACT: resolve_model_path
+    #   PURPOSE: Resolve the effective Torch model directory, including Hugging Face snapshot layouts.
+    #   INPUTS: { folder_name: str - Model directory name from the manifest }
+    #   OUTPUTS: { Path | None - Resolved model directory when present }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: resolve_model_path
     def resolve_model_path(self, folder_name: str) -> Path | None:
         full_path = self.models_dir / folder_name
         if not full_path.exists():
@@ -76,7 +130,15 @@ class TorchBackend(TTSBackend):
 
         return full_path
 
+    # START_CONTRACT: load_model
+    #   PURPOSE: Load or reuse a cached Torch runtime model for the provided specification.
+    #   INPUTS: { spec: ModelSpec - Model specification to load }
+    #   OUTPUTS: { LoadedModelHandle - Loaded Torch model handle }
+    #   SIDE_EFFECTS: Allocates runtime resources, updates in-memory cache, and records load metrics
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: load_model
     def load_model(self, spec: ModelSpec) -> LoadedModelHandle:
+        # START_BLOCK_CHECK_CACHE
         model_path = self.resolve_model_path(spec.folder)
         if model_path is None:
             raise ModelLoadError(
@@ -126,14 +188,24 @@ class TorchBackend(TTSBackend):
                 self._metrics.collector.increment(
                     "models.cache.hit", tags={"backend": self.key}
                 )
+        # END_BLOCK_CHECK_CACHE
 
+        # START_BLOCK_LOAD_FROM_DISK
         return LoadedModelHandle(
             spec=spec,
             runtime_model=runtime_model,
             resolved_path=model_path,
             backend_key=self.key,
         )
+        # END_BLOCK_LOAD_FROM_DISK
 
+    # START_CONTRACT: inspect_model
+    #   PURPOSE: Inspect Torch model availability, artifact completeness, cache state, and runtime readiness.
+    #   INPUTS: { spec: ModelSpec - Model specification to inspect }
+    #   OUTPUTS: { dict[str, Any] - Structured model inspection details }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: inspect_model
     def inspect_model(self, spec: ModelSpec) -> dict[str, Any]:
         resolved_path = self.resolve_model_path(spec.folder)
         available = resolved_path is not None
@@ -182,6 +254,13 @@ class TorchBackend(TTSBackend):
             "capabilities": self.capabilities().to_dict(),
         }
 
+    # START_CONTRACT: readiness_diagnostics
+    #   PURPOSE: Report Torch backend availability and readiness diagnostics for selection and health checks.
+    #   INPUTS: {}
+    #   OUTPUTS: { BackendDiagnostics - Structured Torch readiness diagnostics }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: readiness_diagnostics
     def readiness_diagnostics(self) -> BackendDiagnostics:
         ready = self.supports_platform() and self.is_available()
         reason = None
@@ -210,6 +289,13 @@ class TorchBackend(TTSBackend):
             },
         )
 
+    # START_CONTRACT: cache_diagnostics
+    #   PURPOSE: Report cached Torch model handles held by the backend.
+    #   INPUTS: {}
+    #   OUTPUTS: { dict[str, Any] - Structured cache diagnostics for Torch models }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: cache_diagnostics
     def cache_diagnostics(self) -> dict[str, Any]:
         loaded_models = []
         for folder in sorted(self._cache):
@@ -236,9 +322,23 @@ class TorchBackend(TTSBackend):
             "loaded_models": loaded_models,
         }
 
+    # START_CONTRACT: metrics_summary
+    #   PURPOSE: Summarize Torch backend cache and model loading metrics.
+    #   INPUTS: {}
+    #   OUTPUTS: { dict[str, Any] - Torch backend metrics summary }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: metrics_summary
     def metrics_summary(self) -> dict[str, Any]:
         return self._metrics.model_summary()
 
+    # START_CONTRACT: preload_models
+    #   PURPOSE: Preload a set of Torch model specifications into the backend cache.
+    #   INPUTS: { specs: tuple[ModelSpec, ...] - Model specifications to preload }
+    #   OUTPUTS: { dict[str, Any] - Structured preload outcome summary }
+    #   SIDE_EFFECTS: Loads model runtimes, updates in-memory cache, and records load outcomes
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: preload_models
     def preload_models(self, specs: tuple[ModelSpec, ...]) -> dict[str, Any]:
         loaded_model_ids: list[str] = []
         failed_model_ids: list[str] = []
@@ -267,6 +367,13 @@ class TorchBackend(TTSBackend):
             "errors": errors,
         }
 
+    # START_CONTRACT: synthesize_custom
+    #   PURPOSE: Generate custom-voice audio through the Torch runtime using speaker and instruction inputs.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded Torch model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, speaker: str - Speaker preset or identifier, instruct: str - Additional generation instruction, speed: float - Playback speed modifier }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs Torch inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_custom
     def synthesize_custom(
         self,
         handle: LoadedModelHandle,
@@ -278,15 +385,30 @@ class TorchBackend(TTSBackend):
         instruct: str,
         speed: float,
     ) -> None:
-        wavs, sr = handle.runtime_model.generate_custom_voice(
+        # START_BLOCK_RESOLVE_MODEL
+        runtime_model = handle.runtime_model
+        resolved_language = self._resolve_language(language)
+        # END_BLOCK_RESOLVE_MODEL
+        # START_BLOCK_RUN_TORCH_INFERENCE
+        wavs, sr = runtime_model.generate_custom_voice(
             text=text,
-            language=self._resolve_language(language),
+            language=resolved_language,
             speaker=speaker,
             instruct=instruct,
             speed=speed,
         )
+        # END_BLOCK_RUN_TORCH_INFERENCE
+        # START_BLOCK_WRITE_OUTPUT
         self._persist_first_wav(output_dir, wavs, sr)
+        # END_BLOCK_WRITE_OUTPUT
 
+    # START_CONTRACT: synthesize_design
+    #   PURPOSE: Generate voice-design audio through the Torch runtime from a voice description prompt.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded Torch model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, voice_description: str - Natural language description of the target voice }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs Torch inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_design
     def synthesize_design(
         self,
         handle: LoadedModelHandle,
@@ -303,6 +425,13 @@ class TorchBackend(TTSBackend):
         )
         self._persist_first_wav(output_dir, wavs, sr)
 
+    # START_CONTRACT: synthesize_clone
+    #   PURPOSE: Generate cloned-voice audio through the Torch runtime using prepared reference audio.
+    #   INPUTS: { handle: LoadedModelHandle - Loaded Torch model handle, text: str - Input text to synthesize, output_dir: Path - Directory for generated artifacts, language: str - Requested language code, ref_audio_path: Path - Prepared reference audio path, ref_text: str | None - Optional transcription for the reference audio }
+    #   OUTPUTS: { None - Writes generated audio into the output directory }
+    #   SIDE_EFFECTS: Performs Torch inference and writes audio artifacts to disk
+    #   LINKS: M-BACKENDS
+    # END_CONTRACT: synthesize_clone
     def synthesize_clone(
         self,
         handle: LoadedModelHandle,
@@ -313,12 +442,18 @@ class TorchBackend(TTSBackend):
         ref_audio_path: Path,
         ref_text: str | None,
     ) -> None:
+        # START_BLOCK_PREPARE_CLONE_INPUT
+        resolved_language = self._resolve_language(language)
+        prepared_ref_audio = str(ref_audio_path)
+        # END_BLOCK_PREPARE_CLONE_INPUT
+        # START_BLOCK_RUN_CLONE_INFERENCE
         wavs, sr = handle.runtime_model.generate_voice_clone(
             text=text,
-            language=self._resolve_language(language),
-            ref_audio=str(ref_audio_path),
+            language=resolved_language,
+            ref_audio=prepared_ref_audio,
             ref_text=ref_text,
         )
+        # END_BLOCK_RUN_CLONE_INFERENCE
         self._persist_first_wav(output_dir, wavs, sr)
 
     @staticmethod
@@ -384,3 +519,7 @@ class TorchBackend(TTSBackend):
     def _resolve_dtype_name(cls) -> str | None:
         dtype = cls._resolve_dtype()
         return None if dtype is None else str(dtype).replace("torch.", "")
+
+__all__ = [
+    "TorchBackend",
+]
