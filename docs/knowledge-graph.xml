@@ -1,0 +1,219 @@
+<KnowledgeGraph>
+  <Project NAME="Qwen3-TTS-Apple-Silicon" VERSION="1.0.0">
+    <keywords>TTS, text-to-speech, Qwen3, Apple Silicon, MLX, PyTorch, FastAPI, Telegram bot, CLI, voice synthesis, voice cloning, voice design, audio generation, model inference</keywords>
+    <annotation>Local text-to-speech stack built around Qwen3 TTS models with three transport adapters (HTTP server, Telegram bot, interactive CLI) and a shared runtime core providing model registry, backend selection, job orchestration, and observability.</annotation>
+
+    <M-CONFIG NAME="CoreSettings" TYPE="UTILITY" STATUS="implemented">
+      <purpose>Parse and validate environment-based runtime configuration for all components.</purpose>
+      <path>core/config.py</path>
+      <depends>none</depends>
+      <verification-ref>V-M-CONFIG</verification-ref>
+      <annotations>
+        <class-CoreSettings PURPOSE="Frozen dataclass holding all shared runtime settings" />
+        <fn-parse_core_settings_from_env PURPOSE="Parse environment variables into typed settings dict" />
+        <type-CoreSettingsEnv PURPOSE="TypedDict describing the parsed settings shape" />
+        <type-AuthMode PURPOSE="Literal type for authentication mode" />
+      </annotations>
+    </M-CONFIG>
+
+    <M-ERRORS NAME="DomainErrors" TYPE="UTILITY" STATUS="implemented">
+      <purpose>Define typed domain error hierarchy for all core operations.</purpose>
+      <path>core/errors.py</path>
+      <depends>none</depends>
+      <verification-ref>V-M-ERRORS</verification-ref>
+      <annotations>
+        <class-CoreError PURPOSE="Base exception for all domain errors" />
+        <class-ErrorContext PURPOSE="Structured error payload container" />
+        <class-ModelNotAvailableError PURPOSE="Requested model not found" />
+        <class-BackendError PURPOSE="Base for backend failures" />
+        <class-BackendNotAvailableError PURPOSE="No suitable backend found" />
+        <class-TTSGenerationError PURPOSE="Audio generation failure" />
+        <class-InferenceBusyError PURPOSE="Inference slot occupied" />
+        <class-AudioConversionError PURPOSE="Audio format conversion failure" />
+        <class-RequestTimeoutError PURPOSE="Inference timeout" />
+        <class-JobNotFoundError PURPOSE="Job ID not in store" />
+        <class-JobQueueFullError PURPOSE="Local job queue capacity exceeded" />
+        <class-RateLimitExceededError PURPOSE="Rate limit policy violated" />
+        <class-QuotaExceededError PURPOSE="Quota policy violated" />
+        <class-UnauthorizedError PURPOSE="Missing authentication" />
+        <class-ForbiddenError PURPOSE="Insufficient authorization" />
+      </annotations>
+    </M-ERRORS>
+
+    <M-OBSERVABILITY NAME="Observability" TYPE="UTILITY" STATUS="implemented">
+      <purpose>Provide request context propagation, structured logging, and timing utilities.</purpose>
+      <path>core/observability.py</path>
+      <depends>none</depends>
+      <verification-ref>V-M-OBSERVABILITY</verification-ref>
+      <annotations>
+        <fn-log_event PURPOSE="Emit structured JSON log with request context" />
+        <fn-bind_request_context PURPOSE="Set request ID in context var" />
+        <fn-get_request_id PURPOSE="Read current request ID from context" />
+        <fn-operation_scope PURPOSE="Context manager for operation tracking" />
+        <class-Timer PURPOSE="High-resolution elapsed time tracker" />
+        <class-OperationScope PURPOSE="Context manager for operation name propagation" />
+        <fn-get_logger PURPOSE="Get named logger instance" />
+      </annotations>
+    </M-OBSERVABILITY>
+
+    <M-METRICS NAME="OperationalMetrics" TYPE="UTILITY" STATUS="implemented">
+      <purpose>Collect and expose counters, gauges, and timing metrics for runtime operations.</purpose>
+      <path>core/metrics.py</path>
+      <depends>none</depends>
+      <verification-ref>V-M-METRICS</verification-ref>
+      <annotations>
+        <class-OperationalMetricsRegistry PURPOSE="Facade for operational metric queries" />
+        <class-MetricsCollector PURPOSE="Abstract metric collection interface" />
+        <class-InMemoryMetricsCollector PURPOSE="Thread-safe in-memory metric storage" />
+        <class-NoOpMetricsCollector PURPOSE="No-op stub for testing" />
+        <class-MetricSummary PURPOSE="Snapshot of all collected metrics" />
+      </annotations>
+    </M-METRICS>
+
+    <M-CONTRACTS NAME="DTOs" TYPE="TYPES" STATUS="implemented">
+      <purpose>Define command DTOs, job contracts, and result types for the TTS domain.</purpose>
+      <path>core/contracts/</path>
+      <depends>none</depends>
+      <verification-ref>V-M-CONTRACTS</verification-ref>
+      <annotations>
+        <class-CustomVoiceCommand PURPOSE="Command for custom voice synthesis" />
+        <class-VoiceDesignCommand PURPOSE="Command for voice design synthesis" />
+        <class-VoiceCloneCommand PURPOSE="Command for voice clone synthesis" />
+        <class-GenerationResult PURPOSE="Result of a successful generation" />
+        <class-JobRecord PURPOSE="Metadata record for async jobs" />
+      </annotations>
+    </M-CONTRACTS>
+
+    <M-BACKENDS NAME="BackendRegistry" TYPE="CORE_LOGIC" STATUS="implemented">
+      <purpose>Register, select, and manage TTS inference backends (MLX and Torch).</purpose>
+      <path>core/backends/</path>
+      <depends>M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS</depends>
+      <verification-ref>V-M-BACKENDS</verification-ref>
+      <annotations>
+        <class-BackendRegistry PURPOSE="Backend selection and model spec resolution" />
+        <class-MLXBackend PURPOSE="Apple Silicon MLX inference backend" />
+        <class-TorchBackend PURPOSE="PyTorch CPU/CUDA inference backend" />
+        <class-TTSBackend PURPOSE="Abstract backend interface" />
+        <class-LoadedModelHandle PURPOSE="Handle to a loaded model with metadata" />
+        <class-BackendCapabilities PURPOSE="Backend feature flags" />
+      </annotations>
+      <CrossLink from="M-BACKENDS" to="M-CONFIG" relation="reads-config" />
+      <CrossLink from="M-BACKENDS" to="M-ERRORS" relation="raises-errors" />
+      <CrossLink from="M-BACKENDS" to="M-METRICS" relation="records-metrics" />
+    </M-BACKENDS>
+
+    <M-INFRASTRUCTURE NAME="Infrastructure" TYPE="DATA_LAYER" STATUS="implemented">
+      <purpose>Provide local implementations for job execution, audio I/O, admission control, and concurrency.</purpose>
+      <path>core/infrastructure/</path>
+      <depends>M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS, M-CONTRACTS</depends>
+      <verification-ref>V-M-INFRASTRUCTURE</verification-ref>
+      <annotations>
+        <class-LocalBoundedExecutionManager PURPOSE="Local async job execution with bounded concurrency" />
+        <class-LocalInMemoryJobStore PURPOSE="In-memory job metadata store" />
+        <class-LocalJobArtifactStore PURPOSE="In-memory job artifact storage" />
+        <class-InferenceGuard PURPOSE="Single-slot inference concurrency guard" />
+        <fn-convert_audio_to_wav_if_needed PURPOSE="Audio format normalization via ffmpeg" />
+        <fn-build_rate_limiter PURPOSE="Factory for rate limiter from settings" />
+        <fn-build_quota_guard PURPOSE="Factory for quota guard from settings" />
+      </annotations>
+      <CrossLink from="M-INFRASTRUCTURE" to="M-CONFIG" relation="reads-config" />
+      <CrossLink from="M-INFRASTRUCTURE" to="M-ERRORS" relation="raises-errors" />
+      <CrossLink from="M-INFRASTRUCTURE" to="M-METRICS" relation="records-metrics" />
+    </M-INFRASTRUCTURE>
+
+    <M-MODEL-REGISTRY NAME="ModelRegistry" TYPE="CORE_LOGIC" STATUS="implemented">
+      <purpose>Discover, validate, preload, and serve model handles through the selected backend.</purpose>
+      <path>core/services/model_registry.py</path>
+      <depends>M-BACKENDS, M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS</depends>
+      <verification-ref>V-M-MODEL-REGISTRY</verification-ref>
+      <annotations>
+        <class-ModelRegistry PURPOSE="High-level model discovery and loading facade" />
+      </annotations>
+      <CrossLink from="M-MODEL-REGISTRY" to="M-BACKENDS" relation="delegates-loading" />
+      <CrossLink from="M-MODEL-REGISTRY" to="M-METRICS" relation="reports-metrics" />
+    </M-MODEL-REGISTRY>
+
+    <M-TTS-SERVICE NAME="TTSService" TYPE="CORE_LOGIC" STATUS="implemented">
+      <purpose>Coordinate inference for custom, design, and clone synthesis modes.</purpose>
+      <path>core/services/tts_service.py</path>
+      <depends>M-MODEL-REGISTRY, M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-INFRASTRUCTURE</depends>
+      <verification-ref>V-M-TTS-SERVICE</verification-ref>
+      <annotations>
+        <class-TTSService PURPOSE="Core synthesis coordinator with inference guard" />
+        <fn-generate_audio PURPOSE="Dispatch synthesis call to the appropriate backend method" />
+      </annotations>
+      <CrossLink from="M-TTS-SERVICE" to="M-MODEL-REGISTRY" relation="resolves-models" />
+      <CrossLink from="M-TTS-SERVICE" to="M-INFRASTRUCTURE" relation="uses-audio-io" />
+    </M-TTS-SERVICE>
+
+    <M-APPLICATION NAME="TTSApplicationService" TYPE="CORE_LOGIC" STATUS="implemented">
+      <purpose>Provide application-level facade for TTS operations including job execution gateway and admission control.</purpose>
+      <path>core/application/</path>
+      <depends>M-TTS-SERVICE, M-CONTRACTS, M-ERRORS, M-INFRASTRUCTURE</depends>
+      <verification-ref>V-M-APPLICATION</verification-ref>
+      <annotations>
+        <class-TTSApplicationService PURPOSE="High-level synthesis facade for transport adapters" />
+        <class-JobExecutionGateway PURPOSE="Job submission and retrieval coordinator" />
+        <class-InMemoryJobExecutor PURPOSE="In-memory job execution engine" />
+        <class-QuotaGuard PURPOSE="Quota enforcement abstraction" />
+        <class-RateLimiter PURPOSE="Rate limit enforcement abstraction" />
+      </annotations>
+      <CrossLink from="M-APPLICATION" to="M-TTS-SERVICE" relation="delegates-synthesis" />
+      <CrossLink from="M-APPLICATION" to="M-INFRASTRUCTURE" relation="uses-job-execution" />
+    </M-APPLICATION>
+
+    <M-BOOTSTRAP NAME="CoreBootstrap" TYPE="ENTRY_POINT" STATUS="implemented">
+      <purpose>Assemble the full CoreRuntime from settings by wiring all components together.</purpose>
+      <path>core/bootstrap.py</path>
+      <depends>M-CONFIG, M-BACKENDS, M-MODEL-REGISTRY, M-TTS-SERVICE, M-APPLICATION, M-INFRASTRUCTURE, M-METRICS</depends>
+      <verification-ref>V-M-BOOTSTRAP</verification-ref>
+      <annotations>
+        <class-CoreRuntime PURPOSE="Frozen dataclass holding all wired runtime components" />
+        <fn-build_runtime PURPOSE="Factory function that assembles CoreRuntime from settings" />
+      </annotations>
+      <CrossLink from="M-BOOTSTRAP" to="M-CONFIG" relation="reads-settings" />
+      <CrossLink from="M-BOOTSTRAP" to="M-BACKENDS" relation="creates-backends" />
+      <CrossLink from="M-BOOTSTRAP" to="M-MODEL-REGISTRY" relation="creates-registry" />
+      <CrossLink from="M-BOOTSTRAP" to="M-TTS-SERVICE" relation="creates-service" />
+      <CrossLink from="M-BOOTSTRAP" to="M-APPLICATION" relation="creates-application" />
+    </M-BOOTSTRAP>
+
+    <M-SERVER NAME="HTTPServer" TYPE="ENTRY_POINT" STATUS="implemented">
+      <purpose>Expose TTS capabilities through FastAPI HTTP endpoints with auth, rate limiting, and error handling.</purpose>
+      <path>server/</path>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-ERRORS, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <verification-ref>V-M-SERVER</verification-ref>
+      <annotations>
+        <fn-app PURPOSE="FastAPI application instance" />
+        <fn-build_server_runtime PURPOSE="Server-specific runtime assembly" />
+      </annotations>
+      <CrossLink from="M-SERVER" to="M-BOOTSTRAP" relation="uses-runtime" />
+      <CrossLink from="M-SERVER" to="M-OBSERVABILITY" relation="uses-logging" />
+    </M-SERVER>
+
+    <M-TELEGRAM NAME="TelegramBot" TYPE="ENTRY_POINT" STATUS="implemented">
+      <purpose>Expose TTS capabilities through Telegram bot commands with allowlist, rate limiting, and delivery persistence.</purpose>
+      <path>telegram_bot/</path>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-ERRORS, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <verification-ref>V-M-TELEGRAM</verification-ref>
+      <annotations>
+        <fn-main PURPOSE="Telegram bot entry point and polling loop" />
+        <class-TelegramSettings PURPOSE="Telegram-specific configuration" />
+      </annotations>
+      <CrossLink from="M-TELEGRAM" to="M-BOOTSTRAP" relation="uses-runtime" />
+      <CrossLink from="M-TELEGRAM" to="M-OBSERVABILITY" relation="uses-logging" />
+    </M-TELEGRAM>
+
+    <M-CLI NAME="InteractiveCLI" TYPE="ENTRY_POINT" STATUS="implemented">
+      <purpose>Provide interactive local CLI for synthesis workflows with optional audio playback.</purpose>
+      <path>cli/</path>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <verification-ref>V-M-CLI</verification-ref>
+      <annotations>
+        <fn-main PURPOSE="CLI entry point with interactive loop" />
+      </annotations>
+      <CrossLink from="M-CLI" to="M-BOOTSTRAP" relation="uses-runtime" />
+    </M-CLI>
+
+  </Project>
+</KnowledgeGraph>

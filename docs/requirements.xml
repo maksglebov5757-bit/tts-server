@@ -1,0 +1,125 @@
+<RequirementsAnalysis VERSION="1.0.0">
+  <Project>
+    <name>Qwen3 TTS on Apple Silicon</name>
+    <annotation>Local text-to-speech stack built around Qwen3 TTS models with three transport adapters (HTTP server, Telegram bot, interactive CLI) and a shared runtime core providing model registry, backend selection, job orchestration, and observability.</annotation>
+    <keywords>TTS, text-to-speech, Qwen3, Apple Silicon, MLX, PyTorch, FastAPI, Telegram bot, CLI, voice synthesis, voice cloning, voice design, audio generation, model inference</keywords>
+  </Project>
+
+  <Actors>
+    <actor-APIClient>External HTTP client consuming the FastAPI TTS endpoints.</actor-APIClient>
+    <actor-TelegramUser>Telegram user interacting via bot commands.</actor-TelegramUser>
+    <actor-CLIUser>Local operator using the interactive CLI for synthesis workflows.</actor-CLIUser>
+    <actor-System>Internal runtime performing backend selection, model loading, and job execution.</actor-System>
+  </Actors>
+
+  <UseCases>
+    <UC-001>
+      <Actor>APIClient</Actor>
+      <Action>Submits a text-to-speech request with a named speaker</Action>
+      <Goal>To receive synthesized audio in WAV format via HTTP response</Goal>
+      <Preconditions>Server is running, at least one model is available</Preconditions>
+      <AcceptanceCriteria>Audio bytes returned with correct Content-Type, generation log markers emitted</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-SYNC-TTS</RelatedFlows>
+    </UC-001>
+
+    <UC-002>
+      <Actor>APIClient</Actor>
+      <Action>Submits a voice design request with a natural-language voice description</Action>
+      <Goal>To receive audio synthesized with a dynamically designed voice</Goal>
+      <Preconditions>Server is running, VoiceDesign model is available</Preconditions>
+      <AcceptanceCriteria>Audio bytes returned, design-mode log markers emitted</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-SYNC-TTS</RelatedFlows>
+    </UC-002>
+
+    <UC-003>
+      <Actor>APIClient</Actor>
+      <Action>Submits a voice clone request with reference audio</Action>
+      <Goal>To receive audio synthesized in the cloned voice</Goal>
+      <Preconditions>Server is running, CustomVoice model is available, reference audio is valid</Preconditions>
+      <AcceptanceCriteria>Audio returned, reference audio converted if needed, clone-mode log markers emitted</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-CLONE-TTS</RelatedFlows>
+    </UC-003>
+
+    <UC-004>
+      <Actor>APIClient</Actor>
+      <Action>Submits an async TTS job and polls for result</Action>
+      <Goal>To receive a job ID immediately and retrieve the result later</Goal>
+      <Preconditions>Server is running, job queue not full</Preconditions>
+      <AcceptanceCriteria>Job ID returned on submit, status endpoint shows progress, result endpoint returns audio on completion</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-ASYNC-JOB</RelatedFlows>
+    </UC-004>
+
+    <UC-005>
+      <Actor>TelegramUser</Actor>
+      <Action>Sends /tts command with text and optional speaker/speed/language</Action>
+      <Goal>To receive a voice message with synthesized audio in the chat</Goal>
+      <Preconditions>Bot is running, user is in allowlist, rate limit not exceeded</Preconditions>
+      <AcceptanceCriteria>Voice message delivered to user, delivery metadata persisted</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-TELEGRAM-TTS</RelatedFlows>
+    </UC-005>
+
+    <UC-006>
+      <Actor>TelegramUser</Actor>
+      <Action>Sends /clone command replying to a voice/audio message</Action>
+      <Goal>To receive audio cloned from the reference voice</Goal>
+      <Preconditions>Bot is running, user is in allowlist, reference audio is attached</Preconditions>
+      <AcceptanceCriteria>Cloned voice message delivered, reference audio cleaned up</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-TELEGRAM-TTS</RelatedFlows>
+    </UC-006>
+
+    <UC-007>
+      <Actor>CLIUser</Actor>
+      <Action>Runs interactive CLI and enters synthesis commands</Action>
+      <Goal>To synthesize and optionally play audio locally</Goal>
+      <Preconditions>Python environment active, model files present in .models/</Preconditions>
+      <AcceptanceCriteria>Audio generated and optionally played via sounddevice</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-CLI-TTS</RelatedFlows>
+    </UC-007>
+
+    <UC-008>
+      <Actor>System</Actor>
+      <Action>Selects and loads the appropriate backend (MLX or Torch) at startup</Action>
+      <Goal>To provide a ready inference backend without manual configuration</Goal>
+      <Preconditions>At least one backend runtime is installed</Preconditions>
+      <AcceptanceCriteria>Backend selected, readiness report shows available models</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-BACKEND-SELECTION</RelatedFlows>
+    </UC-008>
+  </UseCases>
+
+  <NonGoals>
+    <item-1>No multi-user cloud deployment or horizontal scaling in v1.</item-1>
+    <item-2>No fine-tuning or training workflows.</item-2>
+    <item-3>No webhook mode for Telegram bot.</item-3>
+    <item-4>No group chat or inline query support in Telegram.</item-4>
+    <item-5>No real-time audio streaming transport.</item-5>
+  </NonGoals>
+
+  <Constraints>
+    <constraint-1>Must run on a single machine with local model files.</constraint-1>
+    <constraint-2>Apple Silicon (MLX) is the primary target; PyTorch is the fallback.</constraint-2>
+    <constraint-3>Python 3.11+ required for all components.</constraint-3>
+    <constraint-4>ffmpeg must be available in PATH for audio conversion.</constraint-4>
+    <constraint-5>Secrets (tokens, credentials) must never appear in logs.</constraint-5>
+    <constraint-6>All transport adapters must reuse the shared core runtime.</constraint-6>
+  </Constraints>
+
+  <Risks>
+    <risk-1>Large model files may cause long startup times with preloading enabled.</risk-1>
+    <risk-2>Single inference guard means concurrent requests queue behind each other.</risk-2>
+    <risk-3>Telegram bot token leakage through logs or error messages.</risk-3>
+    <risk-4>Audio conversion failures with unsupported formats in clone flows.</risk-4>
+  </Risks>
+
+  <OpenQuestions>
+    <question-1>Should the async job system support persistent storage beyond in-memory?</question-1>
+    <question-2>Should streaming inference be exposed at the transport layer?</question-2>
+  </OpenQuestions>
+</RequirementsAnalysis>

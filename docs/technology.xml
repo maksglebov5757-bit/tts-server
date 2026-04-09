@@ -1,0 +1,66 @@
+<TechnologyStack VERSION="1.0.0">
+  <Runtime>CPython 3.11+</Runtime>
+  <Language>Python 3.11</Language>
+  <Framework>FastAPI 0.121.x (server adapter)</Framework>
+
+  <Dependencies>
+    <dep name="fastapi" version="0.121.1" purpose="HTTP API framework for the server adapter" />
+    <dep name="uvicorn" version="0.38.0" purpose="ASGI server for FastAPI" />
+    <dep name="pydantic" version="2.12.3" purpose="Data validation and serialization for API schemas" />
+    <dep name="mlx" version="0.31.1" purpose="Apple Silicon inference backend (macOS only)" />
+    <dep name="mlx-audio" version="0.4.1" purpose="MLX audio processing and TTS integration" />
+    <dep name="mlx-lm" version="0.31.1" purpose="MLX language model inference" />
+    <dep name="torch" version=">=2.6" purpose="PyTorch inference backend (Linux/Windows)" />
+    <dep name="torchaudio" version=">=2.6" purpose="PyTorch audio processing" />
+    <dep name="transformers" version="5.4.0/4.57.3" purpose="Hugging Face model loading and tokenization" />
+    <dep name="librosa" version="0.11.0" purpose="Audio analysis and feature extraction" />
+    <dep name="soundfile" version="0.13.1" purpose="Audio file I/O" />
+    <dep name="sounddevice" version="0.5.3" purpose="Audio playback for CLI" />
+    <dep name="httpx" version="0.28.1" purpose="Async HTTP client for Telegram API calls" />
+    <dep name="tiktoken" version="0.12.0" purpose="Token counting for input validation" />
+    <dep name="typer-slim" version="0.21.1" purpose="CLI framework" />
+    <dep name="numpy" version="2.3.5" purpose="Numerical array operations" />
+    <dep name="scipy" version="1.17.0" purpose="Scientific computation for audio processing" />
+  </Dependencies>
+
+  <VersionConstraints>
+    <constraint lib="python" min="3.11" reason="Uses modern type hint syntax and dataclass features" />
+    <constraint lib="mlx" min="0.31.1" max="0.x" reason="Apple Silicon GPU acceleration for TTS inference" />
+    <constraint lib="fastapi" min="0.121.0" max="0.x" reason="Server adapter depends on current FastAPI API surface" />
+  </VersionConstraints>
+
+  <Tooling>
+    <tool name="package-manager" value="pip" version="24.x" />
+    <tool name="linter" value="ruff" />
+    <tool name="test-runner" value="pytest" version="8.3.0" />
+    <tool name="async-test" value="pytest-asyncio" version="0.24.0" />
+    <tool name="container" value="docker + docker-compose" />
+  </Tooling>
+
+  <Testing>
+    <module-level>
+      <command>python -m pytest tests/unit/ -m unit</command>
+      <focus>Fast deterministic unit and contract checks for isolated logic</focus>
+    </module-level>
+    <wave-level>
+      <command>python -m pytest tests/integration/ -m integration</command>
+      <focus>Adapter wiring and endpoint behavior tests without heavy inference</focus>
+    </wave-level>
+    <phase-level>
+      <command>python -m pytest</command>
+      <focus>Full regression suite including architecture boundary checks</focus>
+    </phase-level>
+    <mocking-policy>Prefer fakes and narrow stubs over broad monkey-patching. Use conftest fixtures for shared test infrastructure.</mocking-policy>
+  </Testing>
+
+  <Observability>
+    <logger>Python logging with JSON-structured output via log_event()</logger>
+    <log-format>[ModuleName][functionName][BLOCK_NAME] message</log-format>
+    <required-fields>request_id, operation, event</required-fields>
+    <redaction>Never log secrets, credentials, bearer tokens, or raw audio payloads.</redaction>
+  </Observability>
+
+  <DeliveryShape>
+    <shape>Single-machine deployment with local model files. Docker Compose for containerized runs. Three independent processes: server, telegram bot, and CLI.</shape>
+  </DeliveryShape>
+</TechnologyStack>

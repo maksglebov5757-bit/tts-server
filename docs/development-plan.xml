@@ -1,0 +1,470 @@
+<DevelopmentPlan VERSION="1.0.0">
+  <ArchitectureNotes>
+    <objective>Clean layered architecture: transport adapters depend on shared core, never on each other.</objective>
+    <non-goal>No distributed or multi-node execution patterns.</non-goal>
+    <risk-1>Backend selection at startup must handle missing runtimes gracefully.</risk-1>
+    <risk-2>Single inference guard serializes all generation requests across adapters.</risk-2>
+  </ArchitectureNotes>
+
+  <Modules>
+    <!-- Layer 0: No dependencies on other project modules -->
+
+    <M-CONFIG NAME="CoreSettings" TYPE="UTILITY" LAYER="0" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Parse and validate environment-based runtime configuration for all components.</purpose>
+        <inputs>
+          <param name="environ" type="Mapping[str, str]" />
+        </inputs>
+        <outputs>
+          <param name="settings" type="CoreSettings" />
+        </outputs>
+        <errors>
+          <error code="INVALID_AUTH_MODE" />
+          <error code="INVALID_BACKEND" />
+        </errors>
+      </contract>
+      <interface>
+        <export-CoreSettings PURPOSE="Frozen dataclass holding all shared runtime settings" />
+        <export-parse_core_settings_from_env PURPOSE="Parse environment variables into typed settings dict" />
+      </interface>
+      <depends>none</depends>
+      <target>
+        <source>core/config.py</source>
+      </target>
+      <observability>
+        <log-prefix>[CoreSettings]</log-prefix>
+      </observability>
+      <verification-ref>V-M-CONFIG</verification-ref>
+    </M-CONFIG>
+
+    <M-ERRORS NAME="DomainErrors" TYPE="UTILITY" LAYER="0" ORDER="2" STATUS="implemented">
+      <contract>
+        <purpose>Define typed domain error hierarchy for all core operations.</purpose>
+        <outputs>
+          <param name="error_classes" type="Exception subclasses with ErrorContext" />
+        </outputs>
+      </contract>
+      <interface>
+        <export-CoreError PURPOSE="Base exception for all domain errors" />
+        <export-ErrorContext PURPOSE="Structured error payload container" />
+        <export-ModelNotAvailableError PURPOSE="Raised when requested model cannot be found" />
+        <export-BackendError PURPOSE="Base for backend-related failures" />
+        <export-TTSGenerationError PURPOSE="Raised when audio generation fails" />
+        <export-InferenceBusyError PURPOSE="Raised when inference slot is occupied" />
+        <export-JobNotFoundError PURPOSE="Raised when job ID is not in store" />
+        <export-RateLimitExceededError PURPOSE="Raised when rate limit policy is violated" />
+        <export-QuotaExceededError PURPOSE="Raised when quota policy is violated" />
+        <export-UnauthorizedError PURPOSE="Raised for missing authentication" />
+      </interface>
+      <depends>none</depends>
+      <target>
+        <source>core/errors.py</source>
+      </target>
+      <verification-ref>V-M-ERRORS</verification-ref>
+    </M-ERRORS>
+
+    <M-OBSERVABILITY NAME="Observability" TYPE="UTILITY" LAYER="0" ORDER="3" STATUS="implemented">
+      <contract>
+        <purpose>Provide request context propagation, structured logging, and timing utilities.</purpose>
+        <outputs>
+          <param name="log_event" type="callable" />
+          <param name="request_id" type="ContextVar[str]" />
+          <param name="operation" type="ContextVar[str]" />
+        </outputs>
+      </contract>
+      <interface>
+        <export-log_event PURPOSE="Emit structured JSON log with request context" />
+        <export-bind_request_context PURPOSE="Set request ID in context var" />
+        <export-get_request_id PURPOSE="Read current request ID from context" />
+        <export-operation_scope PURPOSE="Context manager for operation tracking" />
+        <export-Timer PURPOSE="High-resolution elapsed time tracker" />
+        <export-get_logger PURPOSE="Get named logger instance" />
+      </interface>
+      <depends>none</depends>
+      <target>
+        <source>core/observability.py</source>
+      </target>
+      <verification-ref>V-M-OBSERVABILITY</verification-ref>
+    </M-OBSERVABILITY>
+
+    <M-METRICS NAME="OperationalMetrics" TYPE="UTILITY" LAYER="0" ORDER="4" STATUS="implemented">
+      <contract>
+        <purpose>Collect and expose counters, gauges, and timing metrics for runtime operations.</purpose>
+        <outputs>
+          <param name="registry" type="OperationalMetricsRegistry" />
+          <param name="summary" type="MetricSummary" />
+        </outputs>
+      </contract>
+      <interface>
+        <export-OperationalMetricsRegistry PURPOSE="Facade for operational metric queries" />
+        <export-MetricsCollector PURPOSE="Abstract metric collection interface" />
+        <export-InMemoryMetricsCollector PURPOSE="Thread-safe in-memory metric storage" />
+      </interface>
+      <depends>none</depends>
+      <target>
+        <source>core/metrics.py</source>
+      </target>
+      <verification-ref>V-M-METRICS</verification-ref>
+    </M-METRICS>
+
+    <M-CONTRACTS NAME="DTOs" TYPE="TYPES" LAYER="0" ORDER="5" STATUS="implemented">
+      <contract>
+        <purpose>Define command DTOs, job contracts, and result types for the TTS domain.</purpose>
+      </contract>
+      <interface>
+        <export-CustomVoiceCommand PURPOSE="Command for custom voice synthesis" />
+        <export-VoiceDesignCommand PURPOSE="Command for voice design synthesis" />
+        <export-VoiceCloneCommand PURPOSE="Command for voice clone synthesis" />
+        <export-GenerationResult PURPOSE="Result of a successful generation" />
+        <export-JobRecord PURPOSE="Metadata record for async jobs" />
+      </interface>
+      <depends>none</depends>
+      <target>
+        <source>core/contracts/commands.py</source>
+        <source>core/contracts/results.py</source>
+        <source>core/contracts/jobs.py</source>
+      </target>
+      <verification-ref>V-M-CONTRACTS</verification-ref>
+    </M-CONTRACTS>
+
+    <!-- Layer 1: Depends on layer 0 -->
+
+    <M-BACKENDS NAME="BackendRegistry" TYPE="CORE_LOGIC" LAYER="1" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Register, select, and manage TTS inference backends (MLX and Torch).</purpose>
+        <inputs>
+          <param name="backends" type="list[TTSBackend]" />
+          <param name="settings" type="CoreSettings" />
+        </inputs>
+        <outputs>
+          <param name="selected_backend" type="TTSBackend" />
+          <param name="model_specs" type="tuple[ModelSpec, ...]" />
+        </outputs>
+        <errors>
+          <error code="BACKEND_NOT_AVAILABLE" />
+          <error code="BACKEND_CAPABILITY_ERROR" />
+        </errors>
+      </contract>
+      <interface>
+        <export-BackendRegistry PURPOSE="Backend selection and model spec resolution" />
+        <export-MLXBackend PURPOSE="Apple Silicon MLX inference backend" />
+        <export-TorchBackend PURPOSE="PyTorch CPU/CUDA inference backend" />
+        <export-TTSBackend PURPOSE="Abstract backend interface" />
+        <export-LoadedModelHandle PURPOSE="Handle to a loaded model with metadata" />
+      </interface>
+      <depends>M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS</depends>
+      <target>
+        <source>core/backends/registry.py</source>
+        <source>core/backends/base.py</source>
+        <source>core/backends/mlx_backend.py</source>
+        <source>core/backends/torch_backend.py</source>
+        <source>core/backends/capabilities.py</source>
+      </target>
+      <observability>
+        <log-prefix>[BackendRegistry]</log-prefix>
+        <critical-block>BLOCK_SELECT_BACKEND</critical-block>
+      </observability>
+      <verification-ref>V-M-BACKENDS</verification-ref>
+    </M-BACKENDS>
+
+    <M-INFRASTRUCTURE NAME="Infrastructure" TYPE="DATA_LAYER" LAYER="1" ORDER="2" STATUS="implemented">
+      <contract>
+        <purpose>Provide local implementations for job execution, audio I/O, admission control, and concurrency.</purpose>
+      </contract>
+      <interface>
+        <export-LocalBoundedExecutionManager PURPOSE="Local async job execution with bounded concurrency" />
+        <export-LocalInMemoryJobStore PURPOSE="In-memory job metadata store" />
+        <export-LocalJobArtifactStore PURPOSE="In-memory job artifact storage" />
+        <export-InferenceGuard PURPOSE="Single-slot inference concurrency guard" />
+        <export-convert_audio_to_wav_if_needed PURPOSE="Audio format normalization for clone flows" />
+        <export-build_rate_limiter PURPOSE="Factory for rate limiter from settings" />
+        <export-build_quota_guard PURPOSE="Factory for quota guard from settings" />
+      </interface>
+      <depends>M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS, M-CONTRACTS</depends>
+      <target>
+        <source>core/infrastructure/job_execution_local.py</source>
+        <source>core/infrastructure/audio_io.py</source>
+        <source>core/infrastructure/admission_control_local.py</source>
+        <source>core/infrastructure/concurrency.py</source>
+      </target>
+      <verification-ref>V-M-INFRASTRUCTURE</verification-ref>
+    </M-INFRASTRUCTURE>
+
+    <!-- Layer 2: Depends on layer 0 + 1 -->
+
+    <M-MODEL-REGISTRY NAME="ModelRegistry" TYPE="CORE_LOGIC" LAYER="2" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Discover, validate, preload, and serve model handles through the selected backend.</purpose>
+        <inputs>
+          <param name="backend_registry" type="BackendRegistry" />
+          <param name="preload_policy" type="str" />
+        </inputs>
+        <outputs>
+          <param name="model_handle" type="tuple[ModelSpec, LoadedModelHandle]" />
+          <param name="readiness_report" type="dict" />
+        </outputs>
+        <errors>
+          <error code="MODEL_NOT_AVAILABLE" />
+          <error code="MODEL_LOAD_ERROR" />
+        </errors>
+      </contract>
+      <interface>
+        <export-ModelRegistry PURPOSE="High-level model discovery and loading facade" />
+      </interface>
+      <depends>M-BACKENDS, M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-METRICS</depends>
+      <target>
+        <source>core/services/model_registry.py</source>
+      </target>
+      <observability>
+        <log-prefix>[ModelRegistry]</log-prefix>
+        <critical-block>BLOCK_LOAD_MODEL</critical-block>
+      </observability>
+      <verification-ref>V-M-MODEL-REGISTRY</verification-ref>
+    </M-MODEL-REGISTRY>
+
+    <M-TTS-SERVICE NAME="TTSService" TYPE="CORE_LOGIC" LAYER="2" ORDER="2" STATUS="implemented">
+      <contract>
+        <purpose>Coordinate inference for custom, design, and clone synthesis modes.</purpose>
+        <inputs>
+          <param name="command" type="CustomVoiceCommand | VoiceDesignCommand | VoiceCloneCommand" />
+        </inputs>
+        <outputs>
+          <param name="result" type="GenerationResult" />
+        </outputs>
+        <errors>
+          <error code="TTS_GENERATION_ERROR" />
+          <error code="INFERENCE_BUSY" />
+          <error code="AUDIO_ARTIFACT_NOT_FOUND" />
+        </errors>
+      </contract>
+      <interface>
+        <export-TTSService PURPOSE="Core synthesis coordinator with inference guard" />
+      </interface>
+      <depends>M-MODEL-REGISTRY, M-CONFIG, M-ERRORS, M-OBSERVABILITY, M-INFRASTRUCTURE</depends>
+      <target>
+        <source>core/services/tts_service.py</source>
+      </target>
+      <observability>
+        <log-prefix>[TTSService]</log-prefix>
+        <critical-block>BLOCK_RUN_GENERATION</critical-block>
+      </observability>
+      <verification-ref>V-M-TTS-SERVICE</verification-ref>
+    </M-TTS-SERVICE>
+
+    <M-APPLICATION NAME="TTSApplicationService" TYPE="CORE_LOGIC" LAYER="2" ORDER="3" STATUS="implemented">
+      <contract>
+        <purpose>Provide application-level facade for TTS operations including job execution gateway and admission control.</purpose>
+      </contract>
+      <interface>
+        <export-TTSApplicationService PURPOSE="High-level synthesis facade for transport adapters" />
+        <export-JobExecutionGateway PURPOSE="Job submission and retrieval coordinator" />
+        <export-InMemoryJobExecutor PURPOSE="In-memory job execution engine" />
+        <export-QuotaGuard PURPOSE="Quota enforcement abstraction" />
+        <export-RateLimiter PURPOSE="Rate limit enforcement abstraction" />
+      </interface>
+      <depends>M-TTS-SERVICE, M-CONTRACTS, M-ERRORS, M-INFRASTRUCTURE</depends>
+      <target>
+        <source>core/application/tts_app_service.py</source>
+        <source>core/application/job_execution.py</source>
+        <source>core/application/admission_control.py</source>
+      </target>
+      <verification-ref>V-M-APPLICATION</verification-ref>
+    </M-APPLICATION>
+
+    <!-- Layer 3: Runtime assembly -->
+
+    <M-BOOTSTRAP NAME="CoreBootstrap" TYPE="ENTRY_POINT" LAYER="3" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Assemble the full CoreRuntime from settings by wiring all components together.</purpose>
+        <inputs>
+          <param name="settings" type="CoreSettings" />
+        </inputs>
+        <outputs>
+          <param name="runtime" type="CoreRuntime" />
+        </outputs>
+      </contract>
+      <interface>
+        <export-CoreRuntime PURPOSE="Frozen dataclass holding all wired runtime components" />
+        <export-build_runtime PURPOSE="Factory function that assembles CoreRuntime from settings" />
+      </interface>
+      <depends>M-CONFIG, M-BACKENDS, M-MODEL-REGISTRY, M-TTS-SERVICE, M-APPLICATION, M-INFRASTRUCTURE, M-METRICS</depends>
+      <target>
+        <source>core/bootstrap.py</source>
+      </target>
+      <verification-ref>V-M-BOOTSTRAP</verification-ref>
+    </M-BOOTSTRAP>
+
+    <!-- Transport adapters: Layer 4 -->
+
+    <M-SERVER NAME="HTTPServer" TYPE="ENTRY_POINT" LAYER="4" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Expose TTS capabilities through FastAPI HTTP endpoints with auth, rate limiting, and error handling.</purpose>
+      </contract>
+      <interface>
+        <export-app PURPOSE="FastAPI application instance" />
+      </interface>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-ERRORS, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <target>
+        <source>server/app.py</source>
+        <source>server/bootstrap.py</source>
+        <source>server/api/routes_tts.py</source>
+        <source>server/api/routes_health.py</source>
+        <source>server/api/routes_models.py</source>
+        <source>server/api/auth.py</source>
+        <source>server/api/errors.py</source>
+        <source>server/api/policies.py</source>
+        <source>server/api/contracts.py</source>
+        <source>server/api/responses.py</source>
+        <source>server/schemas/audio.py</source>
+      </target>
+      <observability>
+        <log-prefix>[HTTPServer]</log-prefix>
+      </observability>
+      <verification-ref>V-M-SERVER</verification-ref>
+    </M-SERVER>
+
+    <M-TELEGRAM NAME="TelegramBot" TYPE="ENTRY_POINT" LAYER="4" ORDER="2" STATUS="implemented">
+      <contract>
+        <purpose>Expose TTS capabilities through Telegram bot commands with allowlist, rate limiting, and delivery persistence.</purpose>
+      </contract>
+      <interface>
+        <export-main PURPOSE="Telegram bot entry point and polling loop" />
+      </interface>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-ERRORS, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <target>
+        <source>telegram_bot/__main__.py</source>
+        <source>telegram_bot/bootstrap.py</source>
+        <source>telegram_bot/config.py</source>
+        <source>telegram_bot/polling.py</source>
+        <source>telegram_bot/client.py</source>
+        <source>telegram_bot/handlers/dispatcher.py</source>
+        <source>telegram_bot/handlers/commands.py</source>
+        <source>telegram_bot/handlers/tts_handler.py</source>
+        <source>telegram_bot/job_orchestrator.py</source>
+        <source>telegram_bot/sender.py</source>
+        <source>telegram_bot/media.py</source>
+        <source>telegram_bot/audio.py</source>
+        <source>telegram_bot/rate_limiter.py</source>
+        <source>telegram_bot/observability.py</source>
+      </target>
+      <observability>
+        <log-prefix>[TelegramBot]</log-prefix>
+      </observability>
+      <verification-ref>V-M-TELEGRAM</verification-ref>
+    </M-TELEGRAM>
+
+    <M-CLI NAME="InteractiveCLI" TYPE="ENTRY_POINT" LAYER="4" ORDER="3" STATUS="implemented">
+      <contract>
+        <purpose>Provide interactive local CLI for synthesis workflows with optional audio playback.</purpose>
+      </contract>
+      <interface>
+        <export-main PURPOSE="CLI entry point with interactive loop" />
+      </interface>
+      <depends>M-BOOTSTRAP, M-CONFIG, M-CONTRACTS, M-OBSERVABILITY</depends>
+      <target>
+        <source>cli/__main__.py</source>
+        <source>cli/bootstrap.py</source>
+        <source>cli/main.py</source>
+        <source>cli/runtime.py</source>
+        <source>cli/runtime_config.py</source>
+      </target>
+      <verification-ref>V-M-CLI</verification-ref>
+    </M-CLI>
+  </Modules>
+
+  <DataFlow>
+    <DF-SYNC-TTS NAME="Synchronous TTS Generation" TRIGGER="HTTP POST to /v1/audio/speech or /api/v1/tts/*">
+      <step-1>Server receives HTTP request, validates input, applies auth and rate limiting</step-1>
+      <step-2>Server bootstrap resolves CoreRuntime and calls TTSApplicationService</step-2>
+      <step-3>TTSApplicationService dispatches to TTSService with the appropriate command</step-3>
+      <step-4>TTSService acquires inference guard, resolves model via ModelRegistry</step-4>
+      <step-5>TTSService calls backend.synthesize_* through generate_audio()</step-5>
+      <step-6>Audio result is read, optionally persisted, and returned as GenerationResult</step-6>
+      <step-7>Server returns audio bytes in HTTP response</step-7>
+      <evidence>tts.generation.completed log marker, audio bytes in response</evidence>
+    </DF-SYNC-TTS>
+
+    <DF-ASYNC-JOB NAME="Async Job Submission and Retrieval" TRIGGER="HTTP POST to */jobs">
+      <step-1>Server receives job submission, validates idempotency key</step-1>
+      <step-2>JobExecutionGateway submits job to LocalBoundedExecutionManager</step-2>
+      <step-3>Job runs asynchronously using InMemoryJobExecutor</step-3>
+      <step-4>Client polls GET /api/v1/tts/jobs/{job_id} for status</step-4>
+      <step-5>On completion, client retrieves audio via GET /api/v1/tts/jobs/{job_id}/result</step-5>
+      <evidence>jobs.submitted counter, jobs.completed counter, job status transitions</evidence>
+    </DF-ASYNC-JOB>
+
+    <DF-CLONE-TTS NAME="Voice Clone with Reference Audio" TRIGGER="Clone request with reference audio file">
+      <step-1>Transport adapter receives reference audio and text</step-1>
+      <step-2>TTSService copies reference audio to temporary directory</step-2>
+      <step-3>convert_audio_to_wav_if_needed normalizes format via ffmpeg</step-3>
+      <step-4>Backend synthesizes clone with normalized reference</step-4>
+      <step-5>Temporary files are cleaned up in finally block</step-5>
+      <evidence>tts.clone.reference_audio_prepared, tts.clone.completed log markers</evidence>
+    </DF-CLONE-TTS>
+
+    <DF-TELEGRAM-TTS NAME="Telegram Bot TTS Flow" TRIGGER="Telegram /tts, /design, or /clone command">
+      <step-1>Polling loop receives update from Telegram API</step-1>
+      <step-2>Dispatcher routes to appropriate handler based on command</step-2>
+      <step-3>Handler validates user allowlist and rate limit</step-3>
+      <step-4>Handler creates command DTO and submits to job orchestrator</step-4>
+      <step-5>Job orchestrator polls for completion and delivers audio via sender</step-5>
+      <step-6>Delivery metadata is persisted for recovery after restart</step-6>
+      <evidence>Delivery store contains completed job entries</evidence>
+    </DF-TELEGRAM-TTS>
+
+    <DF-BACKEND-SELECTION NAME="Backend Autoselection at Startup" TRIGGER="build_runtime() invocation">
+      <step-1>BackendRegistry receives list of backend instances and settings</step-1>
+      <step-2>If backend is explicitly set, select that backend</step-2>
+      <step-3>If autoselect is enabled, prefer MLX (Apple Silicon) then Torch</step-3>
+      <step-4>Selected backend loads model manifest and resolves model specs</step-4>
+      <step-5>ModelRegistry applies preload policy if configured</step-5>
+      <evidence>BackendRegistry selection report, model readiness report</evidence>
+    </DF-BACKEND-SELECTION>
+
+    <DF-CLI-TTS NAME="CLI Interactive Synthesis" TRIGGER="User enters synthesis command in CLI">
+      <step-1>CLI runtime reads user input and parses command</step-1>
+      <step-2>CLI creates command DTO from parsed input</step-2>
+      <step-3>TTSApplicationService executes synthesis via core runtime</step-3>
+      <step-4>Audio is optionally saved and/or played via sounddevice</step-4>
+      <evidence>Audio file written, playback completed</evidence>
+    </DF-CLI-TTS>
+  </DataFlow>
+
+  <ImplementationOrder>
+    <Phase-1 name="Foundation" status="done">
+      <goal>Core utilities and configuration without external dependencies.</goal>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Configuration and environment parsing</step-1>
+      <step-2 module="M-ERRORS" status="done" verification="V-M-ERRORS">Domain error hierarchy</step-2>
+      <step-3 module="M-OBSERVABILITY" status="done" verification="V-M-OBSERVABILITY">Structured logging and request context</step-3>
+      <step-4 module="M-METRICS" status="done" verification="V-M-METRICS">Operational metrics collection</step-4>
+      <step-5 module="M-CONTRACTS" status="done" verification="V-M-CONTRACTS">Command DTOs, job contracts, result types</step-5>
+    </Phase-1>
+
+    <Phase-2 name="Core Services" status="done">
+      <goal>Backend selection, model management, and inference coordination.</goal>
+      <step-1 module="M-BACKENDS" status="done" verification="V-M-BACKENDS">Backend registry with MLX and Torch</step-1>
+      <step-2 module="M-INFRASTRUCTURE" status="done" verification="V-M-INFRASTRUCTURE">Local job execution, audio I/O, admission control</step-2>
+      <step-3 module="M-MODEL-REGISTRY" status="done" verification="V-M-MODEL-REGISTRY">Model discovery and preloading</step-3>
+      <step-4 module="M-TTS-SERVICE" status="done" verification="V-M-TTS-SERVICE">Core synthesis coordinator</step-4>
+      <step-5 module="M-APPLICATION" status="done" verification="V-M-APPLICATION">Application facade and job gateway</step-5>
+    </Phase-2>
+
+    <Phase-3 name="Runtime Assembly" status="done">
+      <goal>Wire all core components into a single runtime.</goal>
+      <step-1 module="M-BOOTSTRAP" status="done" verification="V-M-BOOTSTRAP">CoreRuntime assembly</step-1>
+    </Phase-3>
+
+    <Phase-4 name="Transport Adapters" status="done">
+      <goal>Expose TTS through HTTP, Telegram, and CLI.</goal>
+      <step-1 module="M-SERVER" status="done" verification="V-M-SERVER">FastAPI HTTP adapter</step-1>
+      <step-2 module="M-TELEGRAM" status="done" verification="V-M-TELEGRAM">Telegram bot adapter</step-2>
+      <step-3 module="M-CLI" status="done" verification="V-M-CLI">Interactive CLI adapter</step-3>
+    </Phase-4>
+  </ImplementationOrder>
+
+  <ExecutionPolicy>
+    <default-profile>balanced</default-profile>
+    <controller-owns>docs/development-plan.xml, docs/knowledge-graph.xml, docs/verification-plan.xml</controller-owns>
+    <worker-owns>Only module source files and module-local tests inside the approved write scope.</worker-owns>
+  </ExecutionPolicy>
+</DevelopmentPlan>
