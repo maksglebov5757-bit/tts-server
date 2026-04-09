@@ -4,6 +4,29 @@ Unit tests for Telegram dispatcher.
 Tests message routing, command handling, and response generation.
 """
 
+# FILE: tests/unit/test_telegram_bot/test_dispatcher.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for Telegram command dispatch and response templates.
+#   SCOPE: Message routing, authorization, rate-limit handling, help/start text
+#   DEPENDS: M-TELEGRAM
+#   LINKS: V-M-TELEGRAM
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   Template tests - Verify help, start, accepted, success, and error message templates
+#   TestDispatcherInitialization - Verifies dispatcher dependency wiring
+#   TestDispatcherGetHelpMessage - Verifies speaker list formatting in help text
+#   TestMessageSenderProtocol - Verifies sender protocol methods used by dispatcher
+#   TestDispatcherRouting - Verifies routing, authorization, and private-chat handling across updates
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch

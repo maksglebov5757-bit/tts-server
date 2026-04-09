@@ -1,3 +1,51 @@
+# FILE: tests/unit/core/test_job_execution.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for core job execution, storage, and lifecycle management.
+#   SCOPE: Submission, execution, cancellation, artifacts, snapshots
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   StubApplicationService - Fake synthesis application used by job execution tests
+#   BlockingStore - In-memory job store variant that blocks mark_running for contention tests
+#   _make_submission - Helper that builds deterministic async job submissions
+#   _make_generation_result - Helper that builds deterministic generation results
+#   _make_success_snapshot - Helper that builds deterministic job success snapshots
+#   _wait_for_status - Poll helper for async job state transitions in tests
+#   test_in_memory_job_store_creates_queued_job_snapshot - Verifies queued snapshot creation
+#   test_in_memory_job_store_marks_running_and_succeeded_with_result - Verifies running and success transitions persist result data
+#   test_local_in_memory_job_store_uses_artifact_handler_for_terminal_cleanup - Verifies staged input cleanup on success
+#   test_in_memory_job_store_cancels_only_queued_jobs - Verifies cancellation rules for queued jobs
+#   test_in_memory_job_store_rejects_invalid_terminal_failure_status - Verifies invalid terminal states are rejected
+#   test_in_memory_job_store_purges_expired_terminal_jobs - Verifies retention cleanup removes expired terminal jobs
+#   test_in_memory_job_store_returns_existing_job_for_same_idempotency_key_and_payload - Verifies idempotent replay returns stored jobs
+#   test_in_memory_job_store_rejects_idempotency_key_reuse_for_different_payload - Verifies conflicting idempotency reuse is rejected
+#   test_in_memory_job_store_allows_same_idempotency_key_for_different_principals - Verifies idempotency scope remains principal-bound
+#   test_job_execution_gateway_without_manager_delegates_to_store - Verifies gateway uses the store when no manager is configured
+#   test_job_execution_gateway_submit_idempotent_without_manager_delegates_to_store - Verifies idempotent gateway path without a manager
+#   test_in_memory_job_executor_dispatches_by_operation - Verifies executor dispatches custom/design/clone operations correctly
+#   test_local_bounded_execution_manager_runs_job_to_success - Verifies local manager drives successful execution
+#   test_local_bounded_execution_manager_returns_existing_job_for_idempotent_replay - Verifies manager idempotent replay behavior
+#   test_local_bounded_execution_manager_marks_failures - Verifies worker failures become terminal job failures
+#   test_local_bounded_execution_manager_marks_timeouts_from_running_state - Verifies execution timeouts become timeout terminal states
+#   test_local_bounded_execution_manager_cancels_queued_jobs - Verifies queued jobs can be cancelled before running
+#   test_local_bounded_execution_manager_rejects_running_job_cancellation - Verifies running jobs are not cancellable
+#   test_local_bounded_execution_manager_rejects_submit_when_queue_is_full - Verifies bounded queues reject overflow
+#   test_job_execution_gateway_with_manager_delegates_submit_and_cancel_to_manager - Verifies gateway delegates to configured manager
+#   test_local_job_artifact_handler_cleans_up_staged_paths - Verifies artifact handler removes staged files
+#   test_local_adapters_conform_to_explicit_job_ports - Verifies local adapters satisfy declared job protocols
+#   test_build_job_wiring_uses_local_defaults - Verifies bootstrap wiring selects local job defaults
+#   test_build_runtime_uses_local_job_ports_by_default - Verifies runtime bootstrap exposes local job ports by default
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

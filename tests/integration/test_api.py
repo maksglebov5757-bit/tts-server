@@ -1,3 +1,31 @@
+# FILE: tests/integration/test_api.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Integration tests for HTTP API behavior and endpoint responses.
+#   SCOPE: Health checks, model listing, speech endpoints, request handling
+#   DEPENDS: M-SERVER
+#   LINKS: V-M-SERVER
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   _state - Helper that exposes mutable app state from a TestClient
+#   ContentionTTSService - Test double that coordinates concurrent request contention scenarios
+#   StubRegistry - Minimal registry stub for integration tests
+#   client - Fixture that builds a deterministic FastAPI test client with fake runtime services
+#   Synchronous endpoint tests - Verify liveness, models, OpenAI/custom/design/clone happy paths, validation, and upload handling
+#   Error mapping tests - Verify model load, missing model, busy inference, timeout, and queue-full errors use unified responses
+#   Async job flow tests - Verify async submit, status, result, cancel, idempotency, and clone staging behavior
+#   Auth and ownership tests - Verify static bearer protection and job owner isolation across async endpoints
+#   Contention and quota tests - Verify concurrent reads, cancellations, owner isolation, and quota enforcement remain deterministic
+#   Observability tests - Verify request, inference, timeout, and failure logs include expected structured context
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import logging
@@ -1514,9 +1542,16 @@ def test_inference_execution_logging_includes_offload_and_timeout_context(
 
     assert response.status_code == 200
 
-    started_logs = extract_json_logs(caplog, "tts.inference.execution.started")
-    worker_logs = extract_json_logs(caplog, "tts.inference.worker.started")
-    completed_logs = extract_json_logs(caplog, "tts.inference.execution.completed")
+    started_logs = extract_json_logs(
+        caplog, "[RoutesTTS][run_inference_with_timeout][BLOCK_EXECUTE_SYNTHESIS]"
+    )
+    worker_logs = extract_json_logs(
+        caplog, "[RoutesTTS][run_inference_with_timeout][BLOCK_EXECUTE_SYNTHESIS]"
+    )
+    completed_logs = extract_json_logs(
+        caplog,
+        "[RoutesTTS][run_inference_with_timeout][BLOCK_LOG_INFERENCE_COMPLETION]",
+    )
 
     assert any(
         item["request_id"] == "req-observe-success"
@@ -1582,7 +1617,10 @@ def test_request_timeout_logs_observable_timeout_event(
         )
 
     assert response.status_code == 504
-    timeout_logs = extract_json_logs(caplog, "tts.inference.execution.timeout")
+    timeout_logs = extract_json_logs(
+        caplog,
+        "[RoutesTTS][run_inference_with_timeout][BLOCK_HANDLE_INFERENCE_TIMEOUT]",
+    )
     assert any(
         item["request_id"] == "req-observe-timeout"
         and item["inference_operation"] == "synthesize_custom"
@@ -1632,7 +1670,10 @@ def test_inference_worker_failure_logs_controlled_failure_event(
         )
 
     assert response.status_code == 500
-    failed_logs = extract_json_logs(caplog, "tts.inference.execution.failed")
+    failed_logs = extract_json_logs(
+        caplog,
+        "[RoutesTTS][run_inference_with_timeout][BLOCK_HANDLE_INFERENCE_FAILURE]",
+    )
     assert any(
         item["request_id"] == "req-observe-failure"
         and item["inference_operation"] == "synthesize_custom"
@@ -1664,10 +1705,18 @@ def test_request_logging_includes_request_id_and_endpoint_context(
     )
 
     assert response.status_code == 200
-    started_logs = extract_json_logs(caplog, "http.request.started")
-    completed_logs = extract_json_logs(caplog, "http.request.completed")
-    endpoint_logs = extract_json_logs(caplog, "tts.endpoint.started")
-    audio_logs = extract_json_logs(caplog, "http.audio_response.ready")
+    started_logs = extract_json_logs(
+        caplog, "[ServerApp][request_context_middleware][BLOCK_LOG_REQUEST_START]"
+    )
+    completed_logs = extract_json_logs(
+        caplog, "[ServerApp][request_context_middleware][BLOCK_LOG_SUCCESS_RESPONSE]"
+    )
+    endpoint_logs = extract_json_logs(
+        caplog, "[RoutesTTS][openai_speech][BLOCK_LOG_OPENAI_REQUEST]"
+    )
+    audio_logs = extract_json_logs(
+        caplog, "[Responses][build_audio_response][BUILD_AUDIO_RESPONSE]"
+    )
 
     assert any(
         item["request_id"] == "req-123" and item["path"] == "/v1/audio/speech"

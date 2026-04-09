@@ -1,3 +1,25 @@
+# FILE: tests/unit/core/test_metrics_observability.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for core operational metrics and observability tracking.
+#   SCOPE: Execution metrics, model cache metrics, load failure metrics
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   _write_model_artifacts - Helper that writes minimal backend artifacts for metrics tests
+#   _make_nested_qwen3_config - Helper that builds a nested Qwen3 config fixture
+#   test_execution_metrics_collect_lifecycle_and_queue_depth - Verifies execution metrics track lifecycle counts and queue depth
+#   test_mlx_metrics_collect_cache_hits_misses_and_load_failures - Verifies MLX metrics record cache and load outcomes
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import json
@@ -9,7 +31,11 @@ from core.application.job_execution import InMemoryJobExecutor
 from core.backends.mlx_backend import MLXBackend
 from core.metrics import InMemoryMetricsCollector, OperationalMetricsRegistry
 from core.models.catalog import MODEL_SPECS
-from tests.unit.core.test_job_execution import StubApplicationService, _make_submission, _wait_for_status
+from tests.unit.core.test_job_execution import (
+    StubApplicationService,
+    _make_submission,
+    _wait_for_status,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -17,7 +43,9 @@ pytestmark = pytest.mark.unit
 
 def _write_model_artifacts(model_dir: Path, config: dict) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
-    (model_dir / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (model_dir / "config.json").write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     (model_dir / "tokenizer_config.json").write_text("{}\n", encoding="utf-8")
     (model_dir / "vocab.json").write_text("{}\n", encoding="utf-8")
     (model_dir / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
@@ -52,7 +80,10 @@ def _make_nested_qwen3_config() -> dict:
 
 def test_execution_metrics_collect_lifecycle_and_queue_depth():
     metrics = OperationalMetricsRegistry(InMemoryMetricsCollector())
-    from core.infrastructure.job_execution_local import LocalBoundedExecutionManager, LocalInMemoryJobStore
+    from core.infrastructure.job_execution_local import (
+        LocalBoundedExecutionManager,
+        LocalInMemoryJobStore,
+    )
 
     store = LocalInMemoryJobStore()
     manager = LocalBoundedExecutionManager(
@@ -65,7 +96,11 @@ def test_execution_metrics_collect_lifecycle_and_queue_depth():
 
     try:
         created = manager.submit(_make_submission())
-        _wait_for_status(store, created.job_id, status=store.get_snapshot(created.job_id).status.SUCCEEDED)  # type: ignore[union-attr]
+        _wait_for_status(
+            store,
+            created.job_id,
+            status=store.get_snapshot(created.job_id).status.SUCCEEDED,
+        )  # type: ignore[union-attr]
     finally:
         manager.stop()
 
@@ -80,14 +115,18 @@ def test_execution_metrics_collect_lifecycle_and_queue_depth():
     assert summary["queue_depth"]["current"] == 0
 
 
-def test_mlx_metrics_collect_cache_hits_misses_and_load_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_mlx_metrics_collect_cache_hits_misses_and_load_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     metrics = OperationalMetricsRegistry(InMemoryMetricsCollector())
     backend = MLXBackend(models_dir=tmp_path, metrics=metrics)
     spec = MODEL_SPECS["1"]
     model_dir = tmp_path / spec.folder
     _write_model_artifacts(model_dir, _make_nested_qwen3_config())
 
-    monkeypatch.setattr("core.backends.mlx_backend.load_model", lambda path: {"path": path})
+    monkeypatch.setattr(
+        "core.backends.mlx_backend.load_model", lambda path: {"path": path}
+    )
 
     backend.load_model(spec)
     backend.load_model(spec)
@@ -99,7 +138,10 @@ def test_mlx_metrics_collect_cache_hits_misses_and_load_failures(tmp_path: Path,
 
     failing_metrics = OperationalMetricsRegistry(InMemoryMetricsCollector())
     failing_backend = MLXBackend(models_dir=tmp_path, metrics=failing_metrics)
-    monkeypatch.setattr("core.backends.mlx_backend.load_model", lambda path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        "core.backends.mlx_backend.load_model",
+        lambda path: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     with pytest.raises(Exception):
         failing_backend.load_model(spec)

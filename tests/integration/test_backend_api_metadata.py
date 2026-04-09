@@ -1,3 +1,25 @@
+# FILE: tests/integration/test_backend_api_metadata.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Integration tests for backend metadata exposure in the HTTP API.
+#   SCOPE: Backend headers, readiness reporting, model metadata responses
+#   DEPENDS: M-SERVER
+#   LINKS: V-M-SERVER
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   client - Fixture that builds a test client with explicit backend settings
+#   test_audio_response_includes_backend_header - Verifies audio responses expose selected backend metadata
+#   test_readiness_report_exposes_backend_configuration - Verifies readiness payload reports configured and selected backends
+#   test_models_endpoint_exposes_backend_and_capabilities - Verifies model listing exposes backend and capability metadata
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from pathlib import Path

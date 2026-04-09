@@ -1,3 +1,27 @@
+# FILE: tests/unit/core/test_admission_control.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for core admission control and quota enforcement.
+#   SCOPE: Local rate limiting, quota guards, principal-scoped admission decisions
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   test_build_rate_limiter_keeps_disabled_local_default - Verifies disabled rate limiting keeps requests allowed
+#   test_local_rate_limiter_is_principal_scoped - Verifies fixed-window rate limits are principal-scoped
+#   test_local_quota_guard_uses_active_job_cap_per_principal - Verifies active-job quota checks are principal-scoped
+#   test_local_quota_guard_consumes_compute_window_budget - Verifies compute budget is consumed within the configured window
+#   test_local_quota_guard_is_deterministic_under_parallel_compute_contention - Verifies compute quota remains deterministic under parallel contention
+#   test_local_quota_guard_counts_active_jobs_per_principal_under_parallel_checks - Verifies active-job quota checks remain deterministic under parallel reads
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor

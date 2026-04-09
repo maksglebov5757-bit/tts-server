@@ -1,3 +1,31 @@
+# FILE: tests/smoke/test_local_runtime.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Smoke tests for the local runtime HTTP service.
+#   SCOPE: Health endpoints, sync/async synthesis smoke checks
+#   DEPENDS: M-SERVER
+#   LINKS: V-M-SERVER
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   require_smoke_prerequisites - Autouse smoke gate for local runtime dependencies and readiness
+#   request_json - JSON HTTP helper for smoke endpoint checks
+#   request_binary - Binary HTTP helper for smoke audio/result checks
+#   skip_if_missing_runtime_feature - Skip smoke checks when optional runtime endpoints are absent
+#   wait_for_terminal_job_status - Poll async jobs until a terminal snapshot is returned
+#   assert_audio_response - Shared smoke assertion helper for audio responses
+#   test_health_live_smoke - Verifies live probe response from the local server
+#   test_health_ready_smoke - Verifies ready probe response and runtime checks
+#   test_custom_tts_endpoint_smoke - Verifies synchronous custom TTS endpoint end-to-end
+#   test_async_custom_job_flow_smoke - Verifies async custom submit, status, and result flow
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import json
@@ -15,19 +43,25 @@ pytestmark = pytest.mark.smoke
 
 
 SMOKE_FLAG = "QWEN_TTS_RUN_SMOKE"
-SMOKE_BASE_URL = os.getenv("QWEN_TTS_SMOKE_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
+SMOKE_BASE_URL = os.getenv("QWEN_TTS_SMOKE_BASE_URL", "http://127.0.0.1:8001").rstrip(
+    "/"
+)
 MODELS_DIR = Path(os.getenv("QWEN_TTS_MODELS_DIR", ".models"))
 CUSTOM_MODEL_DIR = MODELS_DIR / "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
 EXPECTED_BACKEND = os.getenv("QWEN_TTS_SMOKE_EXPECTED_BACKEND")
 ASYNC_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timeout"}
 ASYNC_POLL_ATTEMPTS = int(os.getenv("QWEN_TTS_SMOKE_ASYNC_POLL_ATTEMPTS", "60"))
-ASYNC_POLL_INTERVAL_SECONDS = float(os.getenv("QWEN_TTS_SMOKE_ASYNC_POLL_INTERVAL_SECONDS", "1.0"))
+ASYNC_POLL_INTERVAL_SECONDS = float(
+    os.getenv("QWEN_TTS_SMOKE_ASYNC_POLL_INTERVAL_SECONDS", "1.0")
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
 def require_smoke_prerequisites():
     if os.getenv(SMOKE_FLAG) != "1":
-        pytest.skip(f"smoke suite is disabled; set {SMOKE_FLAG}=1 and run pytest tests/smoke")
+        pytest.skip(
+            f"smoke suite is disabled; set {SMOKE_FLAG}=1 and run pytest tests/smoke"
+        )
     if not shutil.which("ffmpeg"):
         pytest.skip("ffmpeg is not available in PATH")
     if not CUSTOM_MODEL_DIR.exists():
@@ -37,7 +71,9 @@ def require_smoke_prerequisites():
     except Exception as exc:  # pragma: no cover - environment-dependent gate
         pytest.skip(f"local server is not reachable at {SMOKE_BASE_URL}: {exc}")
     if live_response["status"] != 200:
-        pytest.skip(f"local server health probe returned unexpected status: {live_response['status']}")
+        pytest.skip(
+            f"local server health probe returned unexpected status: {live_response['status']}"
+        )
 
     try:
         ready_response = request_json("GET", "/health/ready")
@@ -61,7 +97,9 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
     headers = {"Accept": "application/json"}
     if payload is not None:
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(f"{SMOKE_BASE_URL}{path}", data=data, method=method, headers=headers)
+    request = urllib.request.Request(
+        f"{SMOKE_BASE_URL}{path}", data=data, method=method, headers=headers
+    )
     with urllib.request.urlopen(request, timeout=120) as response:
         body = response.read().decode("utf-8")
         return {
@@ -90,9 +128,13 @@ def request_binary(method: str, path: str, payload: dict | None = None) -> dict:
         }
 
 
-def skip_if_missing_runtime_feature(exc: urllib.error.HTTPError, *, feature: str) -> None:
+def skip_if_missing_runtime_feature(
+    exc: urllib.error.HTTPError, *, feature: str
+) -> None:
     if exc.code in {404, 405, 501}:  # pragma: no cover - environment-dependent gate
-        pytest.skip(f"local runtime does not expose required {feature} endpoint at {SMOKE_BASE_URL}: HTTP {exc.code}")
+        pytest.skip(
+            f"local runtime does not expose required {feature} endpoint at {SMOKE_BASE_URL}: HTTP {exc.code}"
+        )
     raise exc
 
 
@@ -103,7 +145,9 @@ def wait_for_terminal_job_status(job_id: str) -> dict:
             status_response = request_json("GET", f"/api/v1/tts/jobs/{job_id}")
         except urllib.error.HTTPError as exc:
             skip_if_missing_runtime_feature(exc, feature="async job status")
-        assert status_response["status"] == 200, f"Expected async status polling to return HTTP 200 for job {job_id}"
+        assert status_response["status"] == 200, (
+            f"Expected async status polling to return HTTP 200 for job {job_id}"
+        )
         status_payload = status_response["json"]
         last_status_payload = status_payload
         if status_payload["status"] in ASYNC_TERMINAL_STATUSES:
@@ -140,11 +184,15 @@ def test_health_ready_smoke():
     assert response["json"]["status"] in {"ok", "degraded"}
     assert response["json"]["checks"]["ffmpeg"]["available"] is True
     assert response["json"]["checks"]["models"]["available_models"] >= 1
-    runtime_ready_models = response["json"]["checks"]["models"].get("runtime_ready_models")
+    runtime_ready_models = response["json"]["checks"]["models"].get(
+        "runtime_ready_models"
+    )
     if runtime_ready_models is not None:
         assert runtime_ready_models >= 1
     if EXPECTED_BACKEND:
-        assert response["json"]["checks"]["models"]["selected_backend"] == EXPECTED_BACKEND
+        assert (
+            response["json"]["checks"]["models"]["selected_backend"] == EXPECTED_BACKEND
+        )
 
 
 def test_custom_tts_endpoint_smoke():
@@ -162,7 +210,9 @@ def test_custom_tts_endpoint_smoke():
     except urllib.error.HTTPError as exc:
         skip_if_missing_runtime_feature(exc, feature="sync custom TTS")
 
-    assert_audio_response(response, expected_model="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit")
+    assert_audio_response(
+        response, expected_model="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    )
 
 
 def test_async_custom_job_flow_smoke():
@@ -193,8 +243,12 @@ def test_async_custom_job_flow_smoke():
     terminal_status = wait_for_terminal_job_status(job_id)
 
     assert terminal_status["job_id"] == job_id
-    assert terminal_status["status"] == "succeeded", f"Expected async smoke job to succeed, got {terminal_status}"
-    assert terminal_status["backend"], "Expected terminal async smoke snapshot to report backend"
+    assert terminal_status["status"] == "succeeded", (
+        f"Expected async smoke job to succeed, got {terminal_status}"
+    )
+    assert terminal_status["backend"], (
+        "Expected terminal async smoke snapshot to report backend"
+    )
     assert terminal_status["response_format"] == "wav"
     assert terminal_status["save_output"] is False
     if EXPECTED_BACKEND:
@@ -205,6 +259,8 @@ def test_async_custom_job_flow_smoke():
     except urllib.error.HTTPError as exc:
         skip_if_missing_runtime_feature(exc, feature="async job result")
 
-    assert_audio_response(result_response, expected_model="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit")
+    assert_audio_response(
+        result_response, expected_model="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    )
     assert result_response["headers"].get("x-job-id") == job_id
     assert result_response["headers"].get("x-tts-mode") == "custom"

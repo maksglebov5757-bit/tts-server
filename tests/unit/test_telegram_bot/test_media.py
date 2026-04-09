@@ -2,6 +2,30 @@
 Tests for telegram_bot.media module - Voice Cloning media pipeline.
 """
 
+# FILE: tests/unit/test_telegram_bot/test_media.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for Telegram media validation, staging, and conversion.
+#   SCOPE: Media type detection, file metadata extraction, audio staging
+#   DEPENDS: M-TELEGRAM
+#   LINKS: V-M-TELEGRAM
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   TestMediaTypeEnum - Verifies Telegram media type enum values
+#   TestStagedMedia - Verifies staged media paths, cleanup, and converted-path selection
+#   TestAllowedMediaConstants - Verifies allowed upload content types and suffixes align with API expectations
+#   Media extraction tests - Verify Telegram media type, content type, file id, file size, and file name helpers
+#   Media validation tests - Verify clone media validation and error handling paths
+#   Media staging and conversion tests - Verify download, staging, and WAV normalization behavior
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import tempfile
@@ -499,7 +523,7 @@ class TestConversionToWav:
         """Helper to create a valid WAV file for testing."""
         import wave
         import struct
-        
+
         with wave.open(str(path), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
@@ -546,7 +570,9 @@ class TestConversionToWav:
             assert was_converted is True
         except Exception as exc:
             # If ffmpeg is not available or fails, error is acceptable in test
-            assert "ffmpeg" in str(exc).lower() or "conversion failed" in str(exc).lower()
+            assert (
+                "ffmpeg" in str(exc).lower() or "conversion failed" in str(exc).lower()
+            )
 
     def test_convert_to_wav_nonexistent_file(self, tmp_path):
         """Test conversion handles nonexistent file gracefully."""
@@ -557,10 +583,10 @@ class TestConversionToWav:
         mock_settings.sample_rate = 24000
 
         # Should handle gracefully - raise AudioConversionError
-        with pytest.raises(Exception):  # Could be FileNotFoundError or AudioConversionError
-            convert_audio_to_wav_if_needed(
-                nonexistent, mock_settings
-            )
+        with pytest.raises(
+            Exception
+        ):  # Could be FileNotFoundError or AudioConversionError
+            convert_audio_to_wav_if_needed(nonexistent, mock_settings)
 
 
 class TestStageCloneMedia:
@@ -575,6 +601,7 @@ class TestStageCloneMedia:
         async def mock_download(file_id, dest):
             # Create a minimal valid WAV file
             import wave
+
             with wave.open(str(dest), "wb") as wav:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)

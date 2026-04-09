@@ -1,3 +1,31 @@
+# FILE: tests/unit/core/test_mlx_backend.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for the MLX backend runtime normalization behavior.
+#   SCOPE: Model artifact normalization, tokenizer validation, runtime loading
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   _write_model_artifacts - Helper that writes minimal MLX model artifacts for tests
+#   _make_nested_qwen3_config - Helper that builds a nested Qwen3 talker config fixture
+#   test_qwen3_nested_config_is_normalized_into_temp_runtime_dir - Verifies nested talker configs are normalized into runtime directories
+#   test_qwen3_nested_config_validation_rejects_incomplete_talker_config - Verifies incomplete talker config fails with a load error
+#   test_non_qwen3_config_is_not_rewritten - Verifies unrelated configs are not normalized
+#   test_cache_diagnostics_reports_normalized_runtime_dirs - Verifies cache diagnostics expose normalized runtime metadata
+#   test_normalized_runtime_rebinds_resources_to_original_model_path - Verifies runtime resource rebinding uses the original model path
+#   test_normalized_runtime_loader_rebinds_resources_after_loading - Verifies loader rebinds resources after normalized runtime load
+#   test_qwen3_runtime_load_fails_fast_when_tokenizer_not_initialized - Verifies tokenizer initialization failures surface rich context
+#   test_normalized_runtime_load_fails_fast_when_rebound_tokenizer_not_initialized - Verifies rebound tokenizer failures surface normalized runtime context
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import json

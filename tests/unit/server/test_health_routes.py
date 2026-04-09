@@ -1,3 +1,24 @@
+# FILE: tests/unit/server/test_health_routes.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for server readiness and health route reporting.
+#   SCOPE: Readiness reports, model diagnostics, runtime status aggregation
+#   DEPENDS: M-SERVER
+#   LINKS: V-M-SERVER
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   _make_request - Helper that builds a readiness-report request stub with metrics and runtime state
+#   test_build_readiness_report_returns_deep_diagnostics - Verifies readiness reports include model, runtime, and metrics diagnostics
+#   test_build_readiness_report_returns_degraded_status_when_runtime_not_ready - Verifies degraded readiness is reported when ffmpeg or registry checks fail
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,7 +32,6 @@ from tests.support.api_fakes import DegradedRegistry, DummyRegistry
 
 
 pytestmark = pytest.mark.unit
-
 
 
 def _make_request(settings: ServerSettings, registry) -> SimpleNamespace:
@@ -33,7 +53,17 @@ def _make_request(settings: ServerSettings, registry) -> SimpleNamespace:
                         },
                         "models": {
                             "cache": {"hit": {"mlx": 1}, "miss": {"mlx": 1}},
-                            "load": {"failures": {}, "duration_ms": {"mlx": {"count": 1, "avg_ms": 1.0, "max_ms": 1.0, "last_ms": 1.0}}},
+                            "load": {
+                                "failures": {},
+                                "duration_ms": {
+                                    "mlx": {
+                                        "count": 1,
+                                        "avg_ms": 1.0,
+                                        "max_ms": 1.0,
+                                        "last_ms": 1.0,
+                                    }
+                                },
+                            },
                         },
                     }
                 ),
@@ -45,8 +75,9 @@ def _make_request(settings: ServerSettings, registry) -> SimpleNamespace:
     )
 
 
-
-def test_build_readiness_report_returns_deep_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_build_readiness_report_returns_deep_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     settings = ServerSettings(
         models_dir=tmp_path / ".models",
         outputs_dir=tmp_path / ".outputs",
@@ -77,23 +108,30 @@ def test_build_readiness_report_returns_deep_diagnostics(tmp_path: Path, monkeyp
     assert report.checks["ffmpeg"]["available"] is True
     assert report.checks["config"]["models_dir_exists"] is True
     assert report.checks["config"]["model_preload_policy"] == "listed"
-    assert report.checks["config"]["model_preload_ids"] == ["Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"]
+    assert report.checks["config"]["model_preload_ids"] == [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    ]
     assert report.checks["runtime"]["streaming_enabled"] is True
     assert report.checks["runtime"]["configured_backend"] is None
     assert report.checks["runtime"]["backend_autoselect"] is True
     assert report.checks["runtime"]["metrics"]["execution"]["submitted"] == 1
-    assert report.checks["models"]["metrics"]["operational"]["execution"]["completed"] == 1
+    assert (
+        report.checks["models"]["metrics"]["operational"]["execution"]["completed"] == 1
+    )
 
 
-
-def test_build_readiness_report_returns_degraded_status_when_runtime_not_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_build_readiness_report_returns_degraded_status_when_runtime_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     settings = ServerSettings(
         models_dir=tmp_path / ".models",
         outputs_dir=tmp_path / ".outputs",
         voices_dir=tmp_path / ".voices",
     )
     settings.ensure_directories()
-    monkeypatch.setattr("server.api.routes_health.check_ffmpeg_available", lambda: False)
+    monkeypatch.setattr(
+        "server.api.routes_health.check_ffmpeg_available", lambda: False
+    )
 
     report = build_readiness_report(_make_request(settings, DegradedRegistry(settings)))
 

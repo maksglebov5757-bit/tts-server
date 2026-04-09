@@ -1,3 +1,26 @@
+# FILE: tests/unit/core/test_model_manifest.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for model manifest loading and artifact validation rules.
+#   SCOPE: Manifest parsing, backend artifact requirements, validation reporting
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   test_default_model_manifest_preserves_existing_public_identifiers - Verifies shipped manifest keeps stable public ids and metadata
+#   test_load_model_manifest_rejects_unknown_version - Verifies manifest loader rejects unsupported schema versions
+#   test_load_model_manifest_requires_backend_artifact_validation_for_affinity - Verifies backend affinity requires matching validation rules
+#   test_manifest_artifact_validation_rules_match_existing_backend_requirements - Verifies manifest validation rules match expected runtime artifacts
+#   test_manifest_artifact_validation_reports_missing_torch_preprocessor - Verifies missing torch artifacts are surfaced in validation output
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import json
@@ -41,19 +64,30 @@ def test_default_model_manifest_preserves_existing_public_identifiers():
 
 def test_load_model_manifest_rejects_unknown_version(tmp_path: Path):
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps({"version": 99, "metadata": {}, "modes": [], "models": []}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"version": 99, "metadata": {}, "modes": [], "models": []}),
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ModelManifestValidationError, match="Unsupported manifest version: 99"):
+    with pytest.raises(
+        ModelManifestValidationError, match="Unsupported manifest version: 99"
+    ):
         load_model_manifest(path)
 
 
-def test_load_model_manifest_requires_backend_artifact_validation_for_affinity(tmp_path: Path):
+def test_load_model_manifest_requires_backend_artifact_validation_for_affinity(
+    tmp_path: Path,
+):
     path = tmp_path / "manifest.json"
     payload = {
         "version": 1,
         "metadata": {},
         "modes": [
-            {"id": "custom", "label": "Custom Voice", "semantics": "Instruction-guided synthesis"},
+            {
+                "id": "custom",
+                "label": "Custom Voice",
+                "semantics": "Instruction-guided synthesis",
+            },
         ],
         "models": [
             {
@@ -63,9 +97,17 @@ def test_load_model_manifest_requires_backend_artifact_validation_for_affinity(t
                 "mode": "custom",
                 "output_subfolder": "CustomVoice",
                 "metadata": {"variant": "1.7B"},
-                "mode_metadata": {"id": "custom", "label": "Custom Voice", "semantics": "Instruction-guided synthesis"},
+                "mode_metadata": {
+                    "id": "custom",
+                    "label": "Custom Voice",
+                    "semantics": "Instruction-guided synthesis",
+                },
                 "backend_affinity": ["mlx", "torch"],
-                "rollout": {"enabled": True, "stage": "general", "default_preference": 1},
+                "rollout": {
+                    "enabled": True,
+                    "stage": "general",
+                    "default_preference": 1,
+                },
                 "artifact_validation": {
                     "mlx": {
                         "required_rules": [
@@ -78,18 +120,31 @@ def test_load_model_manifest_requires_backend_artifact_validation_for_affinity(t
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ModelManifestValidationError, match="missing artifact_validation for backends"):
+    with pytest.raises(
+        ModelManifestValidationError, match="missing artifact_validation for backends"
+    ):
         load_model_manifest(path)
 
 
-def test_manifest_artifact_validation_rules_match_existing_backend_requirements(tmp_path: Path):
+def test_manifest_artifact_validation_rules_match_existing_backend_requirements(
+    tmp_path: Path,
+):
     model_path = tmp_path / MODEL_SPECS["1"].folder
     model_path.mkdir(parents=True)
-    for filename in ["config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json"]:
+    for filename in [
+        "config.json",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+    ]:
         (model_path / filename).write_text("{}", encoding="utf-8")
 
-    mlx_check = MODEL_SPECS["1"].artifact_validation_for_backend("mlx").validate(model_path)
-    torch_check = MODEL_SPECS["1"].artifact_validation_for_backend("torch").validate(model_path)
+    mlx_check = (
+        MODEL_SPECS["1"].artifact_validation_for_backend("mlx").validate(model_path)
+    )
+    torch_check = (
+        MODEL_SPECS["1"].artifact_validation_for_backend("torch").validate(model_path)
+    )
 
     assert mlx_check == {
         "loadable": True,
@@ -103,13 +158,17 @@ def test_manifest_artifact_validation_rules_match_existing_backend_requirements(
     }
 
 
-def test_manifest_artifact_validation_reports_missing_torch_preprocessor(tmp_path: Path):
+def test_manifest_artifact_validation_reports_missing_torch_preprocessor(
+    tmp_path: Path,
+):
     model_path = tmp_path / MODEL_SPECS["1"].folder
     model_path.mkdir(parents=True)
     for filename in ["config.json", "model.safetensors", "tokenizer_config.json"]:
         (model_path / filename).write_text("{}", encoding="utf-8")
 
-    torch_check = MODEL_SPECS["1"].artifact_validation_for_backend("torch").validate(model_path)
+    torch_check = (
+        MODEL_SPECS["1"].artifact_validation_for_backend("torch").validate(model_path)
+    )
 
     assert torch_check == {
         "loadable": False,

@@ -1,3 +1,26 @@
+# FILE: tests/unit/core/test_config_and_bootstrap.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for core settings parsing and runtime bootstrap.
+#   SCOPE: Environment parsing, backend wiring, runtime construction
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   test_parse_core_settings_from_env_uses_local_job_backend_defaults - Verifies local runtime defaults are parsed from environment
+#   test_parse_core_settings_from_env_reads_explicit_job_backends - Verifies explicit backend and auth settings are parsed correctly
+#   test_job_wiring_factories_reject_unknown_backend_ids - Verifies bootstrap factories reject unsupported backend ids
+#   test_job_wiring_factories_keep_local_runtime_defaults - Verifies local bootstrap factories preserve default runtime wiring
+#   test_build_runtime_passes_manifest_path_to_backend_registry - Verifies runtime bootstrap passes explicit manifest configuration to registry construction
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from pathlib import Path

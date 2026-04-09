@@ -1,3 +1,32 @@
+# FILE: tests/support/api_fakes.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Test doubles and audio helpers for API and readiness tests.
+#   SCOPE: Fake registries, stub TTS services, WAV fixture helpers
+#   DEPENDS: M-SERVER, M-CORE
+#   LINKS: none
+#   ROLE: TEST
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   DummyRegistry - Fake model registry for API and readiness tests
+#   DummyTTSService - Fake synthesis service returning deterministic generation results
+#   FailingTTSService - Fake synthesis service that raises model load failures
+#   BusyTTSService - Fake synthesis service that raises inference busy errors
+#   MissingModelTTSService - Fake synthesis service that raises unknown-model errors
+#   MissingModeTTSService - Fake synthesis service that raises missing-mode errors
+#   SlowTTSService - Fake synthesis service that sleeps to exercise timeout paths
+#   WorkerFailingTTSService - Fake synthesis service that simulates worker execution failures
+#   DegradedRegistry - Fake registry that reports degraded readiness state
+#   make_wav_bytes - Deterministic WAV fixture helper
+#   extract_json_logs - Structured log extraction helper for assertions
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import io
@@ -427,3 +456,17 @@ def extract_json_logs(caplog: pytest.LogCaptureFixture, event_name: str) -> list
         if payload.get("event") == event_name:
             matched.append(payload)
     return matched
+
+__all__ = [
+    "DummyRegistry",
+    "DummyTTSService",
+    "FailingTTSService",
+    "BusyTTSService",
+    "MissingModelTTSService",
+    "MissingModeTTSService",
+    "SlowTTSService",
+    "WorkerFailingTTSService",
+    "DegradedRegistry",
+    "make_wav_bytes",
+    "extract_json_logs",
+]

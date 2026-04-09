@@ -5,6 +5,29 @@ Tests TelegramSettings.from_env, parse_core_settings_from_env integration,
 and bootstrap/runtime assembly.
 """
 
+# FILE: tests/unit/test_telegram_bot/test_config_bootstrap.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for Telegram settings parsing and runtime bootstrap.
+#   SCOPE: Env parsing, validation, runtime construction, operational settings
+#   DEPENDS: M-TELEGRAM
+#   LINKS: V-M-TELEGRAM
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   _make_env - Helper that builds environment dictionaries for Telegram settings tests
+#   TestTelegramSettingsFromEnv - Verifies Telegram and core settings parsing from environment variables
+#   TestTelegramSettingsValidation - Verifies Telegram settings validation behavior
+#   TestAllowlistPolicy - Verifies allowlist behavior through settings helpers
+#   TestTelegramRuntimeBootstrap - Verifies Telegram runtime bootstrap and validation before build
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import os

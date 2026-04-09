@@ -4,6 +4,29 @@ Unit tests for command parsing and validation.
 Tests command parsing, validation, and policy enforcement.
 """
 
+# FILE: tests/unit/test_telegram_bot/test_commands.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for Telegram command parsing, validation, and policy rules.
+#   SCOPE: Command parsing, TTS argument parsing, validation helpers
+#   DEPENDS: M-TELEGRAM
+#   LINKS: V-M-TELEGRAM
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   TestCommandParsing - Verifies top-level Telegram command parsing and reply preservation
+#   TestTTSArgsParsing - Verifies /tts argument parsing including speaker, speed, and language options
+#   Design and clone argument tests - Verify /design and /clone parsing and validation helpers
+#   Command validation tests - Verify accepted and rejected command forms across command types
+#   Policy helper tests - Verify private-chat detection and valid speaker helper behavior
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import pytest

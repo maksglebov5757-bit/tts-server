@@ -1,3 +1,25 @@
+# FILE: tests/unit/cli/test_runtime.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for CLI runtime bootstrap and entrypoint delegation.
+#   SCOPE: CLI entrypoint, runtime composition, keyboard interrupt handling
+#   DEPENDS: M-CLI
+#   LINKS: V-M-CLI
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   test_cli_main_delegates_to_runtime - Verifies the CLI entrypoint delegates to runtime execution
+#   test_cli_module_entrypoint_delegates_to_runtime - Verifies the package __main__ module stays a thin runtime wrapper
+#   test_cli_runtime_uses_core_runtime_only - Verifies CLI runtime composes only core runtime services
+#   test_run_cli_exits_cleanly_on_keyboard_interrupt - Verifies KeyboardInterrupt exits cleanly without extra errors
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from pathlib import Path

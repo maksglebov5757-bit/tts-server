@@ -9,6 +9,28 @@ Covers:
 - Error handling
 """
 
+# FILE: tests/unit/test_telegram_bot/test_job_orchestrator.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for Telegram job orchestration and delivery metadata.
+#   SCOPE: Submission, idempotency, polling, delivery recovery, result handling
+#   DEPENDS: M-TELEGRAM
+#   LINKS: V-M-TELEGRAM
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   TestDeliveryMetadataStoreAsync - Verifies async delivery metadata storage, updates, and persistence
+#   TestJobSubmissionResult - Verifies job submission result DTO semantics
+#   TestTelegramJobOrchestrator - Verifies Telegram async job submission, idempotency, and metadata creation
+#   Poller and completion tests - Verify job completion polling, recovery, and delivery behavior
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 import asyncio
 import tempfile
 from datetime import datetime, timezone

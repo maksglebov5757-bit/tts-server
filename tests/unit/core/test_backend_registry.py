@@ -1,3 +1,33 @@
+# FILE: tests/unit/core/test_backend_registry.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for backend registry selection and model resolution.
+#   SCOPE: Backend discovery, capability checks, model metadata inspection
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   StubBackend - Minimal backend stub used for registry selection and capability tests
+#   NoAffinityBackend - Backend stub with no manifest affinity match for rejection tests
+#   test_backend_registry_prefers_explicit_backend - Verifies explicit backend selection wins over autoselection
+#   test_backend_registry_raises_for_unknown_backend - Verifies unknown backend ids are rejected
+#   test_backend_registry_rejects_unsupported_mode - Verifies unsupported synthesis modes raise capability errors
+#   test_backend_registry_lists_selected_backend_metadata - Verifies list_backends reports selection state
+#   test_backend_registry_resolves_model_spec_for_mode - Verifies mode-based model resolution
+#   test_backend_registry_prefers_highest_rollout_preference_for_mode - Verifies rollout preference ordering for model selection
+#   test_backend_registry_raises_model_not_available_for_unknown_model_identifier - Verifies unknown model ids surface not-available errors
+#   test_backend_registry_raises_model_not_available_when_mode_has_no_local_artifacts - Verifies missing local artifacts surface not-available errors
+#   test_backend_registry_rejects_model_when_backend_is_not_in_affinity - Verifies backend affinity is enforced
+#   test_model_registry_applies_listed_preload_policy - Verifies listed preload policy preloads requested models
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 from pathlib import Path

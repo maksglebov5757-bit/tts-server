@@ -1,3 +1,27 @@
+# FILE: tests/unit/core/test_tts_service.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Unit tests for the core TTS service orchestration and logging.
+#   SCOPE: Clone synthesis, language normalization, structured log emission
+#   DEPENDS: M-CORE
+#   LINKS: V-M-CORE
+#   ROLE: TEST
+#   MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   StubRegistry - Minimal registry stub returning model specs by mode
+#   LoggingRegistry - Registry stub that counts model resolution calls
+#   _make_core_settings - Build isolated core settings for unit tests
+#   test_synthesize_clone_passes_ref_audio_as_string - Verifies clone requests pass file paths as strings to generation
+#   test_synthesize_clone_passes_explicit_language - Verifies clone requests normalize explicit language values
+#   test_tts_service_emits_structured_logs - Verifies structured synthesis logs include mode and language context
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT and MODULE_MAP]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import logging
@@ -125,8 +149,12 @@ def test_tts_service_emits_structured_logs(
     )
 
     assert result.mode == "clone"
-    started_logs = extract_json_logs(caplog, "tts.clone.started")
-    completed_logs = extract_json_logs(caplog, "tts.generation.completed")
+    started_logs = extract_json_logs(
+        caplog, "[TTSService][synthesize_clone][SYNTHESIZE_CLONE]"
+    )
+    completed_logs = extract_json_logs(
+        caplog, "[TTSService][_run_generation][BLOCK_PERSIST_OUTPUT]"
+    )
     assert registry.calls == 1
     assert any(
         item["mode"] == "clone"
