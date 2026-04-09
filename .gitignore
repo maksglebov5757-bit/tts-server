@@ -61,3 +61,4 @@ dist/
 !.env.example
 
 docs/plans/
+.kilo/plans/1775719613323-hidden-comet.md

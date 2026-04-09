@@ -36,6 +36,7 @@ def test_cli_module_entrypoint_delegates_to_runtime():
 def test_cli_runtime_uses_core_runtime_only(tmp_path: Path):
     settings = CliSettings(
         models_dir=tmp_path / ".models",
+        mlx_models_dir=tmp_path / ".models" / "mlx",
         outputs_dir=tmp_path / ".outputs",
         voices_dir=tmp_path / ".voices",
     )

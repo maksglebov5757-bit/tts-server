@@ -32,7 +32,9 @@ class TorchBackend(TTSBackend):
     key = "torch"
     label = "PyTorch + Transformers"
 
-    def __init__(self, models_dir: Path, *, metrics: OperationalMetricsRegistry | None = None):
+    def __init__(
+        self, models_dir: Path, *, metrics: OperationalMetricsRegistry | None = None
+    ):
         self.models_dir = models_dir
         self._cache: dict[str, Any] = {}
         self._lock = Lock()
@@ -64,7 +66,11 @@ class TorchBackend(TTSBackend):
 
         snapshots_dir = full_path / "snapshots"
         if snapshots_dir.exists():
-            subfolders = sorted(path for path in snapshots_dir.iterdir() if path.is_dir() and not path.name.startswith("."))
+            subfolders = sorted(
+                path
+                for path in snapshots_dir.iterdir()
+                if path.is_dir() and not path.name.startswith(".")
+            )
             if subfolders:
                 return subfolders[0]
 
@@ -91,7 +97,9 @@ class TorchBackend(TTSBackend):
         with self._lock:
             runtime_model = self._cache.get(spec.folder)
             if runtime_model is None:
-                self._metrics.collector.increment("models.cache.miss", tags={"backend": self.key})
+                self._metrics.collector.increment(
+                    "models.cache.miss", tags={"backend": self.key}
+                )
                 try:
                     runtime_model = Qwen3TTSModel.from_pretrained(
                         str(model_path),
@@ -99,15 +107,25 @@ class TorchBackend(TTSBackend):
                         dtype=self._resolve_dtype(),
                     )
                 except Exception as exc:  # pragma: no cover
-                    self._metrics.collector.increment("models.load.failed", tags={"backend": self.key})
+                    self._metrics.collector.increment(
+                        "models.load.failed", tags={"backend": self.key}
+                    )
                     raise ModelLoadError(
                         str(exc),
-                        details={"model": spec.api_name, "model_path": str(model_path), "backend": self.key},
+                        details={
+                            "model": spec.api_name,
+                            "model_path": str(model_path),
+                            "backend": self.key,
+                        },
                     ) from exc
                 self._cache[spec.folder] = runtime_model
-                self._metrics.collector.observe_timing("models.load.duration_ms", 0.0, tags={"backend": self.key})
+                self._metrics.collector.observe_timing(
+                    "models.load.duration_ms", 0.0, tags={"backend": self.key}
+                )
             else:
-                self._metrics.collector.increment("models.cache.hit", tags={"backend": self.key})
+                self._metrics.collector.increment(
+                    "models.cache.hit", tags={"backend": self.key}
+                )
 
         return LoadedModelHandle(
             spec=spec,
@@ -119,12 +137,23 @@ class TorchBackend(TTSBackend):
     def inspect_model(self, spec: ModelSpec) -> dict[str, Any]:
         resolved_path = self.resolve_model_path(spec.folder)
         available = resolved_path is not None
-        artifact_check = spec.artifact_validation_for_backend(self.key).validate(resolved_path) if resolved_path else {
-            "loadable": False,
-            "required_artifacts": [rule.describe() for rule in spec.artifact_validation_for_backend(self.key).required_rules],
-            "missing_artifacts": ["model_directory"],
-        }
-        runtime_ready = bool(available and artifact_check["loadable"] and self.is_available())
+        artifact_check = (
+            spec.artifact_validation_for_backend(self.key).validate(resolved_path)
+            if resolved_path
+            else {
+                "loadable": False,
+                "required_artifacts": [
+                    rule.describe()
+                    for rule in spec.artifact_validation_for_backend(
+                        self.key
+                    ).required_rules
+                ],
+                "missing_artifacts": ["model_directory"],
+            }
+        )
+        runtime_ready = bool(
+            available and artifact_check["loadable"] and self.is_available()
+        )
         cached = spec.folder in self._cache
         return {
             "key": spec.key,
@@ -170,8 +199,12 @@ class TorchBackend(TTSBackend):
                 "platform_supported": self.supports_platform(),
                 "torch_available": torch is not None,
                 "qwen_tts_available": Qwen3TTSModel is not None,
-                "torch_error": None if TORCH_IMPORT_ERROR is None else str(TORCH_IMPORT_ERROR),
-                "qwen_tts_error": None if QWEN_TTS_IMPORT_ERROR is None else str(QWEN_TTS_IMPORT_ERROR),
+                "torch_error": None
+                if TORCH_IMPORT_ERROR is None
+                else str(TORCH_IMPORT_ERROR),
+                "qwen_tts_error": None
+                if QWEN_TTS_IMPORT_ERROR is None
+                else str(QWEN_TTS_IMPORT_ERROR),
                 "device_map": self._resolve_device_map_name(),
                 "dtype": self._resolve_dtype_name(),
             },
@@ -215,7 +248,13 @@ class TorchBackend(TTSBackend):
                 self.load_model(spec)
             except ModelLoadError as exc:
                 failed_model_ids.append(spec.api_name)
-                errors.append({"model": spec.api_name, "reason": str(exc), "details": exc.context.to_dict()})
+                errors.append(
+                    {
+                        "model": spec.api_name,
+                        "reason": str(exc),
+                        "details": exc.context.to_dict(),
+                    }
+                )
             else:
                 loaded_model_ids.append(spec.api_name)
         return {
@@ -234,13 +273,14 @@ class TorchBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         speaker: str,
         instruct: str,
         speed: float,
     ) -> None:
         wavs, sr = handle.runtime_model.generate_custom_voice(
             text=text,
-            language="Auto",
+            language=self._resolve_language(language),
             speaker=speaker,
             instruct=instruct,
             speed=speed,
@@ -253,11 +293,12 @@ class TorchBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         voice_description: str,
     ) -> None:
         wavs, sr = handle.runtime_model.generate_voice_design(
             text=text,
-            language="Auto",
+            language=self._resolve_language(language),
             instruct=voice_description,
         )
         self._persist_first_wav(output_dir, wavs, sr)
@@ -268,18 +309,25 @@ class TorchBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         ref_audio_path: Path,
         ref_text: str | None,
     ) -> None:
         wavs, sr = handle.runtime_model.generate_voice_clone(
             text=text,
-            language="Auto",
+            language=self._resolve_language(language),
             ref_audio=str(ref_audio_path),
             ref_text=ref_text,
         )
         self._persist_first_wav(output_dir, wavs, sr)
 
-    def _persist_first_wav(self, output_dir: Path, wavs: list[Any], sample_rate: int) -> None:
+    @staticmethod
+    def _resolve_language(language: str) -> str:
+        return "Auto" if language == "auto" else language
+
+    def _persist_first_wav(
+        self, output_dir: Path, wavs: list[Any], sample_rate: int
+    ) -> None:
         if not wavs:
             raise TTSGenerationError(
                 "Torch backend returned empty audio result",
@@ -305,7 +353,11 @@ class TorchBackend(TTSBackend):
         except Exception as exc:  # pragma: no cover
             raise TTSGenerationError(
                 str(exc),
-                details={"backend": self.key, "failure_kind": "audio_write_failed", "output_path": str(target)},
+                details={
+                    "backend": self.key,
+                    "failure_kind": "audio_write_failed",
+                    "output_path": str(target),
+                },
             ) from exc
 
     @staticmethod

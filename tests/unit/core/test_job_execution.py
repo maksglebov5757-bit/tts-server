@@ -16,7 +16,11 @@ from core.application.job_execution import (
     JobNotCancellableError,
     JobQueueFullError,
 )
-from core.contracts.commands import CustomVoiceCommand, VoiceCloneCommand, VoiceDesignCommand
+from core.contracts.commands import (
+    CustomVoiceCommand,
+    VoiceCloneCommand,
+    VoiceDesignCommand,
+)
 from core.contracts.jobs import (
     JobOperation,
     JobStatus,
@@ -24,7 +28,12 @@ from core.contracts.jobs import (
     create_job_submission,
 )
 from core.contracts.results import AudioResult, GenerationResult
-from core.bootstrap import build_job_artifact_store, build_job_execution_backend, build_job_metadata_store, build_runtime
+from core.bootstrap import (
+    build_job_artifact_store,
+    build_job_execution_backend,
+    build_job_metadata_store,
+    build_runtime,
+)
 from core.config import (
     CoreSettings,
     DEFAULT_MODELS_DIR,
@@ -46,7 +55,14 @@ pytestmark = pytest.mark.unit
 
 
 class StubApplicationService:
-    def __init__(self, result: GenerationResult | None = None, error: Exception | None = None, *, started: Event | None = None, release: Event | None = None):
+    def __init__(
+        self,
+        result: GenerationResult | None = None,
+        error: Exception | None = None,
+        *,
+        started: Event | None = None,
+        release: Event | None = None,
+    ):
         self.result = result or _make_generation_result()
         self.error = error
         self.started = started
@@ -125,7 +141,13 @@ def _make_success_snapshot() -> JobSuccessSnapshot:
     return JobSuccessSnapshot(generation=_make_generation_result())
 
 
-def _wait_for_status(store: LocalInMemoryJobStore, job_id: str, status: JobStatus, *, timeout: float = 2.0):
+def _wait_for_status(
+    store: LocalInMemoryJobStore,
+    job_id: str,
+    status: JobStatus,
+    *,
+    timeout: float = 2.0,
+):
     deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout)
     last_snapshot = None
     while datetime.now(timezone.utc) < deadline:
@@ -134,7 +156,9 @@ def _wait_for_status(store: LocalInMemoryJobStore, job_id: str, status: JobStatu
         if snapshot is not None and snapshot.status is status:
             return snapshot
         sleep(0.01)
-    raise AssertionError(f"Timed out waiting for status {status.value}, last snapshot: {last_snapshot}")
+    raise AssertionError(
+        f"Timed out waiting for status {status.value}, last snapshot: {last_snapshot}"
+    )
 
 
 def test_in_memory_job_store_creates_queued_job_snapshot():
@@ -159,7 +183,9 @@ def test_in_memory_job_store_marks_running_and_succeeded_with_result():
     completed_at = started_at + timedelta(seconds=3)
 
     running = store.mark_running(created.job_id, started_at=started_at)
-    succeeded = store.mark_succeeded(created.job_id, success=_make_success_snapshot(), completed_at=completed_at)
+    succeeded = store.mark_succeeded(
+        created.job_id, success=_make_success_snapshot(), completed_at=completed_at
+    )
     resolution = store.get_result(created.job_id)
 
     assert running.status is JobStatus.RUNNING
@@ -178,15 +204,21 @@ def test_in_memory_job_store_marks_running_and_succeeded_with_result():
     assert resolution.terminal_state.success is not None
 
 
-def test_local_in_memory_job_store_uses_artifact_handler_for_terminal_cleanup(tmp_path: Path):
+def test_local_in_memory_job_store_uses_artifact_handler_for_terminal_cleanup(
+    tmp_path: Path,
+):
     staged_path = tmp_path / "staged-input.wav"
     staged_path.write_bytes(b"audio")
     artifact_store = LocalJobArtifactStore()
-    store = LocalInMemoryJobStore(artifact_store=artifact_store, retention_ttl_seconds=60.0)
+    store = LocalInMemoryJobStore(
+        artifact_store=artifact_store, retention_ttl_seconds=60.0
+    )
     created = store.create(
         create_job_submission(
             operation=JobOperation.SYNTHESIZE_CUSTOM,
-            command=CustomVoiceCommand(text="hello", model="demo-model", save_output=False),
+            command=CustomVoiceCommand(
+                text="hello", model="demo-model", save_output=False
+            ),
             submit_request_id="req-cleanup",
             owner_principal_id="local-default",
             response_format="wav",
@@ -232,11 +264,17 @@ def test_in_memory_job_store_rejects_invalid_terminal_failure_status():
 def test_in_memory_job_store_purges_expired_terminal_jobs():
     store = LocalInMemoryJobStore(retention_ttl_seconds=1.0)
     created = store.create(
-        _make_submission(idempotency_key="idem-1", idempotency_scope="principal-a", idempotency_fingerprint="fp-1")
+        _make_submission(
+            idempotency_key="idem-1",
+            idempotency_scope="principal-a",
+            idempotency_fingerprint="fp-1",
+        )
     )
     completed_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     store.mark_running(created.job_id, started_at=completed_at - timedelta(seconds=1))
-    store.mark_succeeded(created.job_id, success=_make_success_snapshot(), completed_at=completed_at)
+    store.mark_succeeded(
+        created.job_id, success=_make_success_snapshot(), completed_at=completed_at
+    )
 
     assert store.get_snapshot(created.job_id) is None
     assert store.get_result(created.job_id) is None
@@ -247,7 +285,11 @@ def test_in_memory_job_store_returns_existing_job_for_same_idempotency_key_and_p
     store = LocalInMemoryJobStore()
 
     first = store.create_or_get(
-        _make_submission(idempotency_key="idem-1", idempotency_scope="principal-a", idempotency_fingerprint="fp-1")
+        _make_submission(
+            idempotency_key="idem-1",
+            idempotency_scope="principal-a",
+            idempotency_fingerprint="fp-1",
+        )
     )
     second = store.create_or_get(
         _make_submission(
@@ -267,11 +309,21 @@ def test_in_memory_job_store_returns_existing_job_for_same_idempotency_key_and_p
 
 def test_in_memory_job_store_rejects_idempotency_key_reuse_for_different_payload():
     store = LocalInMemoryJobStore()
-    store.create_or_get(_make_submission(idempotency_key="idem-1", idempotency_scope="principal-a", idempotency_fingerprint="fp-1"))
+    store.create_or_get(
+        _make_submission(
+            idempotency_key="idem-1",
+            idempotency_scope="principal-a",
+            idempotency_fingerprint="fp-1",
+        )
+    )
 
     with pytest.raises(JobIdempotencyConflictError, match="different payload"):
         store.create_or_get(
-            _make_submission(idempotency_key="idem-1", idempotency_scope="principal-a", idempotency_fingerprint="fp-2")
+            _make_submission(
+                idempotency_key="idem-1",
+                idempotency_scope="principal-a",
+                idempotency_fingerprint="fp-2",
+            )
         )
 
 
@@ -327,8 +379,12 @@ def test_job_execution_gateway_submit_idempotent_without_manager_delegates_to_st
     store = LocalInMemoryJobStore()
     gateway = JobExecutionGateway(store=store)
 
-    first = gateway.submit_idempotent(_make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1"))
-    second = gateway.submit_idempotent(_make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1"))
+    first = gateway.submit_idempotent(
+        _make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1")
+    )
+    second = gateway.submit_idempotent(
+        _make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1")
+    )
 
     assert first.created is True
     assert second.created is False
@@ -343,7 +399,12 @@ def test_in_memory_job_executor_dispatches_by_operation():
     design_result = executor.execute(
         create_job_submission(
             operation=JobOperation.SYNTHESIZE_DESIGN,
-            command=VoiceDesignCommand(text="hello", voice_description="calm", model="demo-model", save_output=False),
+            command=VoiceDesignCommand(
+                text="hello",
+                voice_description="calm",
+                model="demo-model",
+                save_output=False,
+            ),
             submit_request_id="req-2",
             owner_principal_id="local-default",
             response_format="wav",
@@ -354,7 +415,13 @@ def test_in_memory_job_executor_dispatches_by_operation():
     clone_result = executor.execute(
         create_job_submission(
             operation=JobOperation.SYNTHESIZE_CLONE,
-            command=VoiceCloneCommand(text="hello", ref_text="sample", ref_audio_path=Path("/tmp/source.wav"), model="demo-model", save_output=False),
+            command=VoiceCloneCommand(
+                text="hello",
+                ref_text="sample",
+                ref_audio_path=Path("/tmp/source.wav"),
+                model="demo-model",
+                save_output=False,
+            ),
             submit_request_id="req-3",
             owner_principal_id="local-default",
             response_format="wav",
@@ -402,8 +469,12 @@ def test_local_bounded_execution_manager_returns_existing_job_for_idempotent_rep
     )
 
     try:
-        first = manager.submit_idempotent(_make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1"))
-        second = manager.submit_idempotent(_make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1"))
+        first = manager.submit_idempotent(
+            _make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1")
+        )
+        second = manager.submit_idempotent(
+            _make_submission(idempotency_key="idem-1", idempotency_fingerprint="fp-1")
+        )
 
         assert first.created is True
         assert second.created is False
@@ -416,7 +487,9 @@ def test_local_bounded_execution_manager_marks_failures():
     store = LocalInMemoryJobStore()
     manager = LocalBoundedExecutionManager(
         store=store,
-        executor=InMemoryJobExecutor(application_service=StubApplicationService(error=RuntimeError("boom"))),
+        executor=InMemoryJobExecutor(
+            application_service=StubApplicationService(error=RuntimeError("boom"))
+        ),
     )
 
     try:
@@ -425,7 +498,10 @@ def test_local_bounded_execution_manager_marks_failures():
 
         assert failed.terminal_error is not None
         assert failed.terminal_error.code == "job_execution_failed"
-        assert failed.terminal_error.details == {"reason": "boom", "error_type": "RuntimeError"}
+        assert failed.terminal_error.details == {
+            "reason": "boom",
+            "error_type": "RuntimeError",
+        }
     finally:
         manager.stop()
 
@@ -567,12 +643,16 @@ def test_local_job_artifact_handler_cleans_up_staged_paths(tmp_path: Path):
             JobExecutionBackend,
             LocalBoundedExecutionManager(
                 store=LocalInMemoryJobStore(),
-                executor=InMemoryJobExecutor(application_service=StubApplicationService()),
+                executor=InMemoryJobExecutor(
+                    application_service=StubApplicationService()
+                ),
             ),
         ),
     ],
 )
-def test_local_adapters_conform_to_explicit_job_ports(port_type: type[object], instance: object):
+def test_local_adapters_conform_to_explicit_job_ports(
+    port_type: type[object], instance: object
+):
     assert isinstance(instance, port_type)
     if isinstance(instance, LocalBoundedExecutionManager):
         instance.stop()
@@ -581,6 +661,7 @@ def test_local_adapters_conform_to_explicit_job_ports(port_type: type[object], i
 def test_build_job_wiring_uses_local_defaults():
     settings = CoreSettings(
         models_dir=DEFAULT_MODELS_DIR,
+        mlx_models_dir=DEFAULT_MODELS_DIR / "mlx",
         outputs_dir=DEFAULT_OUTPUTS_DIR,
         voices_dir=DEFAULT_VOICES_DIR,
         upload_staging_dir=DEFAULT_UPLOAD_STAGING_DIR,
@@ -607,6 +688,7 @@ def test_build_job_wiring_uses_local_defaults():
 def test_build_runtime_uses_local_job_ports_by_default(tmp_path: Path):
     settings = CoreSettings(
         models_dir=tmp_path / "models",
+        mlx_models_dir=tmp_path / "mlx-models",
         outputs_dir=tmp_path / "outputs",
         voices_dir=tmp_path / "voices",
         upload_staging_dir=tmp_path / "uploads",

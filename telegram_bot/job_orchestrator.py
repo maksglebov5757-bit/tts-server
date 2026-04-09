@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.contracts.jobs import (
     JobSnapshot,
@@ -32,8 +32,24 @@ from core.contracts.jobs import (
     create_job_submission,
 )
 from core.contracts.jobs import JobOperation as JobOp
-from core.contracts.commands import CustomVoiceCommand, VoiceDesignCommand, VoiceCloneCommand
+from core.contracts.commands import (
+    CustomVoiceCommand,
+    VoiceDesignCommand,
+    VoiceCloneCommand,
+)
 from core.observability import log_event
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+class TelegramSenderProtocol(Protocol):
+    async def send_text(self, chat_id: int, text: str) -> Any: ...
+
+    async def send_voice(
+        self, chat_id: int, audio_bytes: bytes, caption: str | None = None
+    ) -> Any: ...
+
 
 if TYPE_CHECKING:
     from telegram_bot.config import TelegramSettings
@@ -44,7 +60,7 @@ TELEGRAM_IDEMPOTENCY_SCOPE = "telegram"
 @dataclass
 class JobSubmissionResult:
     """Result of job submission."""
-    
+
     success: bool
     job_id: str | None = None
     is_duplicate: bool = False
@@ -54,7 +70,7 @@ class JobSubmissionResult:
 @dataclass
 class JobCompletionResult:
     """Result of job completion check."""
-    
+
     status: JobStatus
     is_terminal: bool
     success: bool | None  # None if not terminal yet
@@ -67,7 +83,7 @@ class JobCompletionResult:
 @dataclass
 class JobSuccessSnapshot:
     """Snapshot of successful job result."""
-    
+
     job_id: str
     status: str
 
@@ -75,11 +91,11 @@ class JobSuccessSnapshot:
 class DeliveryMetadataStore:
     """
     Async store for delivery metadata with atomic writes.
-    
+
     This store tracks which jobs have been delivered to prevent
     duplicate deliveries after restarts.
     """
-    
+
     def __init__(self, storage_path: Path | str):
         """Initialize store with path to storage file."""
         self._storage_path = Path(storage_path)
@@ -87,44 +103,42 @@ class DeliveryMetadataStore:
         self._cache: dict[str, dict[str, Any]] = {}
         self._dirty = False
         self._loaded = False
-    
+
     async def _load_unlocked(self) -> None:
         """Load metadata from storage file while caller holds the store lock."""
         if self._loaded:
             return
-        
+
         if not self._storage_path.exists():
             self._cache = {}
             self._loaded = True
             return
-        
+
         try:
             with open(self._storage_path, "r") as f:
                 self._cache = json.load(f)
         except (json.JSONDecodeError, IOError):
             self._cache = {}
-        
+
         self._loaded = True
-    
+
     async def _save_unlocked(self) -> None:
         """Save metadata to storage file atomically while caller holds the store lock."""
         if not self._dirty:
             return
-        
+
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self._storage_path.with_suffix(".tmp")
         with open(temp_path, "w") as f:
             json.dump(self._cache, f)
-        
+
         temp_path.replace(self._storage_path)
         self._dirty = False
-    
+
     def _key(self, chat_id: int, message_id: int) -> str:
         """Generate storage key."""
         return f"{chat_id}:{message_id}"
-    
 
-    
     async def is_delivered(self, chat_id: int, message_id: int) -> bool:
         """Check if message has been fully delivered."""
         async with self._lock:
@@ -134,7 +148,7 @@ class DeliveryMetadataStore:
             if metadata is None:
                 return False
             return "delivered_at" in metadata
-    
+
     async def get_pending_deliveries(self) -> list[dict[str, Any]]:
         """Get all pending deliveries."""
         async with self._lock:
@@ -144,7 +158,7 @@ class DeliveryMetadataStore:
                 for metadata in self._cache.values()
                 if "delivered_at" not in metadata
             ]
-    
+
     async def get_delivery_metadata(
         self,
         chat_id: int,
@@ -156,7 +170,7 @@ class DeliveryMetadataStore:
             key = self._key(chat_id, message_id)
             metadata = self._cache.get(key)
             return metadata.copy() if metadata is not None else None
-    
+
     async def create(
         self,
         chat_id: int,
@@ -165,12 +179,12 @@ class DeliveryMetadataStore:
     ) -> dict[str, Any]:
         """
         Create a new delivery metadata entry for a pending job.
-        
+
         Args:
             chat_id: Telegram chat ID
             message_id: Telegram message ID
             job_id: Core job ID
-            
+
         Returns:
             Created metadata dict
         """
@@ -178,7 +192,7 @@ class DeliveryMetadataStore:
             await self._load_unlocked()
             key = self._key(chat_id, message_id)
             now = datetime.now(timezone.utc).isoformat()
-            
+
             metadata = {
                 "chat_id": chat_id,
                 "message_id": message_id,
@@ -187,13 +201,13 @@ class DeliveryMetadataStore:
                 "status": "pending",
                 "created_at": now,
             }
-            
+
             self._cache[key] = metadata
             self._dirty = True
             await self._save_unlocked()
-            
+
             return metadata.copy()
-    
+
     async def get(
         self,
         chat_id: int,
@@ -201,7 +215,7 @@ class DeliveryMetadataStore:
     ) -> dict[str, Any] | None:
         """Get delivery metadata for a message (alias for get_delivery_metadata)."""
         return await self.get_delivery_metadata(chat_id, message_id)
-    
+
     async def mark_delivered(
         self,
         chat_id: int,
@@ -215,43 +229,45 @@ class DeliveryMetadataStore:
             await self._load_unlocked()
             key = self._key(chat_id, message_id)
             now = datetime.now(timezone.utc).isoformat()
-            
+
             # Start with existing metadata if present, or create new
+            metadata: dict[str, Any]
             if key in self._cache:
-                metadata = self._cache[key].copy()
+                metadata = cast(dict[str, Any], self._cache[key].copy())
             else:
                 metadata = {
                     "chat_id": chat_id,
                     "message_id": message_id,
                 }
-            
+
             # Update metadata
-            metadata["success"] = success
-            metadata["error_message"] = error_message
-            metadata["delivered_at"] = now
-            metadata["status"] = "delivered" if success else "failed"
-            
+            metadata_any = cast(dict[str, Any], metadata)
+            metadata_any["success"] = success
+            metadata_any["error_message"] = error_message
+            metadata_any["delivered_at"] = now
+            metadata_any["status"] = "delivered" if success else "failed"
+
             # Update job_id if provided
             if job_id is not None:
-                metadata["job_id"] = job_id
-            
+                metadata_any["job_id"] = job_id
+
             self._cache[key] = metadata
             self._dirty = True
             await self._save_unlocked()
-            
+
             return metadata.copy()
 
 
 class TelegramJobOrchestrator:
     """
     Orchestrates TTS and Voice Design job submission and completion.
-    
+
     This class provides:
     - Synchronous job submission with idempotency
     - Job completion checking
     - Integration with core job execution gateway
     """
-    
+
     def __init__(
         self,
         job_execution: Any,
@@ -268,11 +284,14 @@ class TelegramJobOrchestrator:
     @contextmanager
     def _get_store(self):
         """Get the core job store if available."""
-        if hasattr(self._job_execution, '_store') and self._job_execution._store is not None:
+        if (
+            hasattr(self._job_execution, "_store")
+            and self._job_execution._store is not None
+        ):
             yield self._job_execution._store
         else:
             yield None
-    
+
     def submit_tts_job(
         self,
         text: str,
@@ -280,25 +299,26 @@ class TelegramJobOrchestrator:
         speed: float,
         chat_id: int,
         message_id: int,
+        language: str = "auto",
     ) -> JobSubmissionResult:
         """
         Submit TTS job for a Telegram message.
-        
+
         Uses idempotency to prevent duplicate submissions when the same
         Telegram message is processed multiple times.
-        
+
         Args:
             text: Text to synthesize
             speaker: Speaker name
             speed: Speed multiplier (0.5-2.0)
             chat_id: Telegram chat ID
             message_id: Telegram message ID
-            
+
         Returns:
             JobSubmissionResult indicating success/duplicate/error
         """
         idempotency_key = f"telegram:{chat_id}:{message_id}"
-        
+
         # Check if job already exists via idempotency in core store
         with self._get_store() as store:
             if store is not None:
@@ -317,13 +337,13 @@ class TelegramJobOrchestrator:
                         job_id=existing_by_idem.snapshot.job_id,
                         job_status=existing_by_idem.snapshot.status.value,
                     )
-                    
+
                     return JobSubmissionResult(
                         success=True,
                         job_id=existing_by_idem.snapshot.job_id,
                         is_duplicate=True,
                     )
-        
+
         # Create new job submission
         try:
             submission = create_job_submission(
@@ -332,6 +352,7 @@ class TelegramJobOrchestrator:
                     text=text,
                     speaker=speaker,
                     speed=speed,
+                    language=language,
                     save_output=False,
                 ),
                 submit_request_id=idempotency_key,
@@ -343,10 +364,10 @@ class TelegramJobOrchestrator:
                 idempotency_scope=TELEGRAM_IDEMPOTENCY_SCOPE,
                 idempotency_fingerprint=None,
             )
-            
+
             # Submit job through gateway
             resolution = self._job_execution.submit_idempotent(submission)
-            
+
             log_event(
                 self._logger,
                 level=logging.INFO,
@@ -357,16 +378,17 @@ class TelegramJobOrchestrator:
                 job_id=resolution.snapshot.job_id,
                 speaker=speaker,
                 speed=speed,
+                language=language,
                 text_length=len(text),
                 created=resolution.created,
             )
-            
+
             return JobSubmissionResult(
                 success=True,
                 job_id=resolution.snapshot.job_id,
                 is_duplicate=not resolution.created,
             )
-            
+
         except Exception as exc:
             log_event(
                 self._logger,
@@ -378,39 +400,40 @@ class TelegramJobOrchestrator:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            
+
             return JobSubmissionResult(
                 success=False,
                 job_id=None,
                 is_duplicate=False,
                 error_message=str(exc),
             )
-    
+
     def submit_design_job(
         self,
         voice_description: str,
         text: str,
         chat_id: int,
         message_id: int,
+        language: str = "auto",
     ) -> JobSubmissionResult:
         """
         Submit Voice Design job for a Telegram message.
-        
+
         Uses idempotency to prevent duplicate submissions when the same
         Telegram message is processed multiple times.
-        
+
         Args:
             voice_description: Description of the voice to create
             text: Text to synthesize
             chat_id: Telegram chat ID
             message_id: Telegram message ID
-            
+
         Returns:
             JobSubmissionResult indicating success/duplicate/error
         """
         # Design jobs use "design" prefix for idempotency to separate from TTS jobs
         idempotency_key = f"telegram:design:{chat_id}:{message_id}"
-        
+
         # Check if job already exists via idempotency in core store
         with self._get_store() as store:
             if store is not None:
@@ -429,13 +452,13 @@ class TelegramJobOrchestrator:
                         job_id=existing_by_idem.snapshot.job_id,
                         job_status=existing_by_idem.snapshot.status.value,
                     )
-                    
+
                     return JobSubmissionResult(
                         success=True,
                         job_id=existing_by_idem.snapshot.job_id,
                         is_duplicate=True,
                     )
-        
+
         # Create new job submission
         try:
             submission = create_job_submission(
@@ -443,6 +466,7 @@ class TelegramJobOrchestrator:
                 command=VoiceDesignCommand(
                     text=text,
                     voice_description=voice_description,
+                    language=language,
                     save_output=False,
                 ),
                 submit_request_id=idempotency_key,
@@ -454,10 +478,10 @@ class TelegramJobOrchestrator:
                 idempotency_scope=TELEGRAM_IDEMPOTENCY_SCOPE,
                 idempotency_fingerprint=None,
             )
-            
+
             # Submit job through gateway
             resolution = self._job_execution.submit_idempotent(submission)
-            
+
             log_event(
                 self._logger,
                 level=logging.INFO,
@@ -468,15 +492,16 @@ class TelegramJobOrchestrator:
                 job_id=resolution.snapshot.job_id,
                 voice_description_length=len(voice_description),
                 text_length=len(text),
+                language=language,
                 created=resolution.created,
             )
-            
+
             return JobSubmissionResult(
                 success=True,
                 job_id=resolution.snapshot.job_id,
                 is_duplicate=not resolution.created,
             )
-            
+
         except Exception as exc:
             log_event(
                 self._logger,
@@ -488,7 +513,7 @@ class TelegramJobOrchestrator:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            
+
             return JobSubmissionResult(
                 success=False,
                 job_id=None,
@@ -503,26 +528,27 @@ class TelegramJobOrchestrator:
         chat_id: int,
         message_id: int,
         ref_audio_path: str | None = None,
+        language: str = "auto",
     ) -> JobSubmissionResult:
         """
         Submit Voice Clone job for a Telegram message.
-        
+
         Uses idempotency to prevent duplicate submissions when the same
         Telegram message is processed multiple times.
-        
+
         Args:
             text: Text to synthesize
             ref_text: Optional reference text transcript
             chat_id: Telegram chat ID
             message_id: Telegram message ID
             ref_audio_path: Optional path to staged reference audio file
-            
+
         Returns:
             JobSubmissionResult indicating success/duplicate/error
         """
         # Clone jobs use "clone" prefix for idempotency to separate from TTS/design jobs
         idempotency_key = f"telegram:clone:{chat_id}:{message_id}"
-        
+
         # Check if job already exists via idempotency in core store
         with self._get_store() as store:
             if store is not None:
@@ -541,24 +567,25 @@ class TelegramJobOrchestrator:
                         job_id=existing_by_idem.snapshot.job_id,
                         job_status=existing_by_idem.snapshot.status.value,
                     )
-                    
+
                     return JobSubmissionResult(
                         success=True,
                         job_id=existing_by_idem.snapshot.job_id,
                         is_duplicate=True,
                     )
-        
+
         # Create new job submission
         try:
             # Import here to avoid circular import issues
             from pathlib import Path as PathLib
-            
+
             submission = create_job_submission(
                 operation=JobOperation.SYNTHESIZE_CLONE,
                 command=VoiceCloneCommand(
                     text=text,
                     ref_audio_path=PathLib(ref_audio_path) if ref_audio_path else None,
                     ref_text=ref_text,
+                    language=language,
                     save_output=False,
                 ),
                 submit_request_id=idempotency_key,
@@ -570,10 +597,10 @@ class TelegramJobOrchestrator:
                 idempotency_scope=TELEGRAM_IDEMPOTENCY_SCOPE,
                 idempotency_fingerprint=None,
             )
-            
+
             # Submit job through gateway
             resolution = self._job_execution.submit_idempotent(submission)
-            
+
             log_event(
                 self._logger,
                 level=logging.INFO,
@@ -583,16 +610,17 @@ class TelegramJobOrchestrator:
                 message_id=message_id,
                 job_id=resolution.snapshot.job_id,
                 ref_text_provided=ref_text is not None,
+                language=language,
                 text_length=len(text),
                 created=resolution.created,
             )
-            
+
             return JobSubmissionResult(
                 success=True,
                 job_id=resolution.snapshot.job_id,
                 is_duplicate=not resolution.created,
             )
-            
+
         except Exception as exc:
             log_event(
                 self._logger,
@@ -604,7 +632,7 @@ class TelegramJobOrchestrator:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            
+
             return JobSubmissionResult(
                 success=False,
                 job_id=None,
@@ -615,10 +643,10 @@ class TelegramJobOrchestrator:
     def check_job_completion(self, job_id: str) -> JobCompletionResult:
         """
         Check if job has completed and get result.
-        
+
         Args:
             job_id: Core job ID
-            
+
         Returns:
             JobCompletionResult with terminal state if completed
         """
@@ -629,9 +657,9 @@ class TelegramJobOrchestrator:
                 is_terminal=False,
                 success=None,
             )
-        
+
         is_terminal = snapshot.status.is_terminal
-        
+
         if snapshot.status == JobStatus.SUCCEEDED:
             result = self._job_execution.get_result(job_id)
             if result is not None and result.success is not None:
@@ -639,7 +667,9 @@ class TelegramJobOrchestrator:
                     status=snapshot.status,
                     is_terminal=is_terminal,
                     success=True,
-                    audio_bytes=result.success.generation.audio.bytes_data if result.success.generation else None,
+                    audio_bytes=result.success.generation.audio.bytes_data
+                    if result.success.generation
+                    else None,
                     duration_ms=self._calculate_duration_ms(snapshot),
                 )
             return JobCompletionResult(
@@ -647,14 +677,18 @@ class TelegramJobOrchestrator:
                 is_terminal=is_terminal,
                 success=True,
             )
-        
-        if snapshot.status in {JobStatus.FAILED, JobStatus.TIMEOUT, JobStatus.CANCELLED}:
+
+        if snapshot.status in {
+            JobStatus.FAILED,
+            JobStatus.TIMEOUT,
+            JobStatus.CANCELLED,
+        }:
             error_message = None
             error_code = None
             if snapshot.terminal_error:
                 error_code = snapshot.terminal_error.code
                 error_message = snapshot.terminal_error.message
-            
+
             return JobCompletionResult(
                 status=snapshot.status,
                 is_terminal=is_terminal,
@@ -663,14 +697,14 @@ class TelegramJobOrchestrator:
                 error_code=error_code,
                 duration_ms=self._calculate_duration_ms(snapshot),
             )
-        
+
         # QUEUED or RUNNING
         return JobCompletionResult(
             status=snapshot.status,
             is_terminal=is_terminal,
             success=None,
         )
-    
+
     @staticmethod
     def _calculate_duration_ms(snapshot: JobSnapshot) -> float | None:
         """Calculate job duration in milliseconds."""
@@ -684,19 +718,19 @@ class TelegramJobOrchestrator:
 class TelegramJobPoller:
     """
     Polls job completion and handles delivery.
-    
+
     This class runs in the background and checks for completed jobs,
     delivering results to users via the Telegram sender.
     """
-    
+
     orchestrator: TelegramJobOrchestrator
-    sender: TelegramSender
+    sender: TelegramSenderProtocol
     delivery_store: DeliveryMetadataStore
     settings: TelegramSettings
     poll_interval_seconds: float = 1.0
     _running: bool = field(default=False, init=False)
     _task: asyncio.Task | None = field(default=None, init=False)
-    
+
     async def start(self) -> None:
         """Start the job poller and keep running until stopped or cancelled."""
         if self._running:
@@ -709,7 +743,7 @@ class TelegramJobPoller:
             self._running = False
             if self._task is asyncio.current_task():
                 self._task = None
-    
+
     async def stop(self) -> None:
         """Stop the job poller."""
         self._running = False
@@ -722,12 +756,12 @@ class TelegramJobPoller:
                 pass
         if self._task is task:
             self._task = None
-    
+
     async def _poll_loop(self) -> None:
         """Main polling loop for job completion."""
         # First, recover pending jobs from previous run
         await self._recover_pending_jobs()
-        
+
         while self._running:
             try:
                 await self._check_pending_deliveries()
@@ -737,58 +771,68 @@ class TelegramJobPoller:
             except Exception as exc:
                 logging.getLogger(__name__).error(f"Error in job poller: {exc}")
                 await asyncio.sleep(5.0)  # Back off on error
-    
+
     async def _recover_pending_jobs(self) -> None:
         """Recover and deliver results from previous session."""
         from telegram_bot.observability import METRICS
-        
+
         pending = await self.delivery_store.get_pending_deliveries()
-        
+
         if not pending:
             return
-        
+
         logging.getLogger(__name__).info(
             f"Recovering {len(pending)} pending jobs from previous session"
         )
-        
+
         for metadata in pending:
             job_id = metadata.get("job_id")
             chat_id = metadata.get("chat_id")
             message_id = metadata.get("message_id")
-            
+
             if not all([job_id, chat_id, message_id]):
                 continue
-            
-            result = self.orchestrator.check_job_completion(job_id)
-            
+
+            resolved_job_id = cast(str, job_id)
+            resolved_chat_id = cast(int, chat_id)
+            resolved_message_id = cast(int, message_id)
+
+            result = self.orchestrator.check_job_completion(resolved_job_id)
+
             if result.is_terminal:
                 await self._deliver_job_result(
-                    job_id,
+                    resolved_job_id,
                     result,
-                    chat_id,
-                    message_id,
+                    resolved_chat_id,
+                    resolved_message_id,
                 )
                 METRICS.job_delivery_recovered()
-    
+
     async def _check_pending_deliveries(self) -> None:
         """Check pending deliveries and deliver completed jobs."""
         from telegram_bot.observability import METRICS
-        
+
         pending = await self.delivery_store.get_pending_deliveries()
-        
+
         for metadata in pending:
             job_id = metadata.get("job_id")
             chat_id = metadata.get("chat_id")
             message_id = metadata.get("message_id")
-            
+
             if not all([job_id, chat_id, message_id]):
                 continue
-            
-            result = self.orchestrator.check_job_completion(job_id)
-            
+
+            resolved_job_id = cast(str, job_id)
+            resolved_chat_id = cast(int, chat_id)
+            resolved_message_id = cast(int, message_id)
+
+            result = self.orchestrator.check_job_completion(resolved_job_id)
+
             if result.is_terminal:
-                await self._deliver_job_result(job_id, result, chat_id, message_id)
-    
+                await self._deliver_job_result(
+                    resolved_job_id, result, resolved_chat_id, resolved_message_id
+                )
+
     async def _deliver_job_result(
         self,
         job_id: str,
@@ -798,7 +842,7 @@ class TelegramJobPoller:
     ) -> None:
         """Deliver job result to user."""
         from telegram_bot.observability import METRICS
-        
+
         try:
             if result.success:
                 # Send voice message
@@ -809,7 +853,7 @@ class TelegramJobPoller:
                         result.audio_bytes,
                         caption=caption,
                     )
-                    
+
                     if delivery_result.success:
                         await self.delivery_store.mark_delivered(
                             chat_id,
@@ -846,7 +890,7 @@ class TelegramJobPoller:
                     result.error_message,
                 )
                 METRICS.job_delivery_completed()
-                
+
         except Exception as exc:
             LOGGER.error(
                 f"Failed to deliver job result: {exc}",
@@ -854,7 +898,7 @@ class TelegramJobPoller:
                     "job_id": job_id,
                     "chat_id": chat_id,
                     "message_id": message_id,
-                }
+                },
             )
             await self.delivery_store.mark_delivered(
                 chat_id,
@@ -862,12 +906,12 @@ class TelegramJobPoller:
                 False,
                 str(exc),
             )
-    
+
     def _build_success_caption(self, duration_ms: float | None) -> str:
         """Build success caption for voice message."""
         duration = (duration_ms / 1000) if duration_ms else 0
         return f"✅ *Готово*\n\nVoice сообщение успешно подготовлено. Длительность около *{duration:.1f} с*."
-    
+
     def _build_error_text(self, error_message: str | None) -> str:
         """Build error text for failure message."""
         error = error_message or "Во время генерации произошла неизвестная ошибка"

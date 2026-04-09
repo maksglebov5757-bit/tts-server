@@ -64,6 +64,8 @@ The image exposes port `8000` and uses `python -m uvicorn server:app --host 0.0.
 - `POST /api/v1/tts/design`
 - `POST /api/v1/tts/clone`
 
+All TTS request payloads accept `language` with default `auto`. Clone form endpoints also accept `language=auto` when omitted.
+
 ### Asynchronous job endpoints
 
 - `POST /v1/audio/speech/jobs`
@@ -75,6 +77,7 @@ The image exposes port `8000` and uses `python -m uvicorn server:app --host 0.0.
 - `POST /api/v1/tts/jobs/{job_id}/cancel`
 
 Async submission endpoints accept the `Idempotency-Key` header.
+`language` participates in async idempotency fingerprints, so different language selections create different jobs.
 
 ## Important runtime behavior
 

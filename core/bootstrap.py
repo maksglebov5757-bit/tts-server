@@ -45,19 +45,22 @@ class CoreRuntime:
     metrics: OperationalMetricsRegistry
 
 
-
 def build_job_artifact_store(settings: CoreSettings) -> JobArtifactStore:
     if settings.job_artifact_backend == "local":
         return LocalJobArtifactStore()
-    raise ValueError(f"Unsupported job artifact backend: {settings.job_artifact_backend}")
+    raise ValueError(
+        f"Unsupported job artifact backend: {settings.job_artifact_backend}"
+    )
 
 
-
-def build_job_metadata_store(settings: CoreSettings, *, artifact_store: JobArtifactStore) -> JobMetadataStore:
+def build_job_metadata_store(
+    settings: CoreSettings, *, artifact_store: JobArtifactStore
+) -> JobMetadataStore:
     if settings.job_metadata_backend == "local":
         return LocalInMemoryJobStore(artifact_store=artifact_store)
-    raise ValueError(f"Unsupported job metadata backend: {settings.job_metadata_backend}")
-
+    raise ValueError(
+        f"Unsupported job metadata backend: {settings.job_metadata_backend}"
+    )
 
 
 def build_job_execution_backend(
@@ -68,9 +71,12 @@ def build_job_execution_backend(
     metrics: OperationalMetricsRegistry,
 ) -> JobExecutionBackend:
     if settings.job_execution_backend == "local":
-        return LocalBoundedExecutionManager(store=store, executor=executor, metrics=metrics)
-    raise ValueError(f"Unsupported job execution backend: {settings.job_execution_backend}")
-
+        return LocalBoundedExecutionManager(
+            store=store, executor=executor, metrics=metrics
+        )
+    raise ValueError(
+        f"Unsupported job execution backend: {settings.job_execution_backend}"
+    )
 
 
 def build_runtime(settings: CoreSettings) -> CoreRuntime:
@@ -79,7 +85,7 @@ def build_runtime(settings: CoreSettings) -> CoreRuntime:
     metrics = OperationalMetricsRegistry()
     backend_registry = BackendRegistry(
         [
-            MLXBackend(settings.models_dir, metrics=metrics),
+            MLXBackend(settings.mlx_models_dir, metrics=metrics),
             TorchBackend(settings.models_dir, metrics=metrics),
         ],
         requested_backend=settings.backend,
@@ -92,12 +98,16 @@ def build_runtime(settings: CoreSettings) -> CoreRuntime:
         preload_model_ids=settings.model_preload_ids,
         metrics=metrics,
     )
-    tts_service = TTSService(registry=registry, settings=settings, inference_guard=inference_guard)
+    tts_service = TTSService(
+        registry=registry, settings=settings, inference_guard=inference_guard
+    )
     application = TTSApplicationService(tts_service=tts_service)
     job_artifact_store = build_job_artifact_store(settings)
     job_store = build_job_metadata_store(settings, artifact_store=job_artifact_store)
     job_executor = InMemoryJobExecutor(application_service=application)
-    job_manager = build_job_execution_backend(settings, store=job_store, executor=job_executor, metrics=metrics)
+    job_manager = build_job_execution_backend(
+        settings, store=job_store, executor=job_executor, metrics=metrics
+    )
     job_execution = JobExecutionGateway(store=job_store, manager=job_manager)
     rate_limiter = build_rate_limiter(settings)
     quota_guard = build_quota_guard(settings, store=job_store)

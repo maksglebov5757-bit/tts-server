@@ -12,7 +12,11 @@ from typing import Optional
 
 from cli.bootstrap import build_cli_runtime
 from cli.runtime_config import CliSettings
-from core.contracts.commands import CustomVoiceCommand, VoiceCloneCommand, VoiceDesignCommand
+from core.contracts.commands import (
+    CustomVoiceCommand,
+    VoiceCloneCommand,
+    VoiceDesignCommand,
+)
 from core.infrastructure.audio_io import convert_audio_to_wav_if_needed
 from core.models.catalog import EMOTION_EXAMPLES, MODEL_SPECS, SPEAKER_MAP
 
@@ -76,7 +80,9 @@ class CliRuntime:
             except FileNotFoundError:
                 continue
 
-    def display_saved_output(self, saved_path: Optional[Path], backend: Optional[str] = None) -> None:
+    def display_saved_output(
+        self, saved_path: Optional[Path], backend: Optional[str] = None
+    ) -> None:
         if not saved_path:
             return
         try:
@@ -95,7 +101,9 @@ class CliRuntime:
         print(f"Backend: {backend.label} [{backend.key}]")
         print(f"Selection: {selection.selection_reason}")
 
-    def get_safe_input(self, prompt: str = "\nEnter text (or drag .txt file): ") -> Optional[str]:
+    def get_safe_input(
+        self, prompt: str = "\nEnter text (or drag .txt file): "
+    ) -> Optional[str]:
         try:
             raw_input = input(prompt).strip()
             if raw_input.lower() in ["exit", "quit", "q"]:
@@ -141,7 +149,9 @@ class CliRuntime:
             return
 
         try:
-            clean_wav_path, converted = convert_audio_to_wav_if_needed(raw_path, self.settings)
+            clean_wav_path, converted = convert_audio_to_wav_if_needed(
+                raw_path, self.settings
+            )
         except Exception as exc:
             print(f"Error: {exc}")
             return
@@ -193,6 +203,8 @@ class CliRuntime:
         elif speed_choice == "3":
             speed = 0.8
 
+        language = input("Language (default auto): ").strip().lower() or "auto"
+
         while True:
             text = self.get_safe_input()
             if text is None:
@@ -204,6 +216,7 @@ class CliRuntime:
                         text=text,
                         model=spec.folder,
                         save_output=True,
+                        language=language,
                         speaker=speaker,
                         instruct=base_instruct,
                         speed=speed,
@@ -225,6 +238,8 @@ class CliRuntime:
         if not instruct:
             return
 
+        language = input("Language (default auto): ").strip().lower() or "auto"
+
         while True:
             text = self.get_safe_input()
             if text is None:
@@ -236,6 +251,7 @@ class CliRuntime:
                         text=text,
                         model=spec.folder,
                         save_output=True,
+                        language=language,
                         voice_description=instruct,
                     )
                 )
@@ -266,6 +282,7 @@ class CliRuntime:
         ref_audio: Optional[Path] = None
         ref_text: Optional[str] = None
         converted = False
+        language = input("Language (default auto): ").strip().lower() or "auto"
 
         if sub_choice == "1":
             saved = self.get_saved_voices()
@@ -293,7 +310,9 @@ class CliRuntime:
             ref_input = input("\nDrag Reference Audio: ").strip()
             raw_path = Path(self.clean_path(ref_input))
             try:
-                ref_audio, converted = convert_audio_to_wav_if_needed(raw_path, self.settings)
+                ref_audio, converted = convert_audio_to_wav_if_needed(
+                    raw_path, self.settings
+                )
             except Exception as exc:
                 print(f"Error: {exc}")
                 return
@@ -302,7 +321,9 @@ class CliRuntime:
             return
 
         while True:
-            text = self.get_safe_input(f"\nText for '{os.path.basename(str(ref_audio))}' (or 'exit'): ")
+            text = self.get_safe_input(
+                f"\nText for '{os.path.basename(str(ref_audio))}' (or 'exit'): "
+            )
             if text is None:
                 break
             print("Cloning...")
@@ -312,6 +333,7 @@ class CliRuntime:
                         text=text,
                         model=spec.folder,
                         save_output=True,
+                        language=language,
                         ref_audio_path=ref_audio,
                         ref_text=ref_text,
                     )

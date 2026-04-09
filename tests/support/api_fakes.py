@@ -5,11 +5,18 @@ import json
 import time
 import wave
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from core.backends.base import TTSBackend
 from core.contracts.results import AudioResult, GenerationResult
-from core.errors import InferenceBusyError, ModelLoadError, ModelNotAvailableError, TTSGenerationError
+from core.errors import (
+    InferenceBusyError,
+    ModelLoadError,
+    ModelNotAvailableError,
+    TTSGenerationError,
+)
 from core.services.model_registry import ModelRegistry
 from server.bootstrap import ServerSettings
 
@@ -19,8 +26,11 @@ class DummyRegistry(ModelRegistry):
         self.settings = settings
 
     @property
-    def backend(self):
-        return type("BackendStub", (), {"key": "mlx", "label": "MLX Apple Silicon"})()
+    def backend(self) -> TTSBackend:
+        return cast(
+            TTSBackend,
+            type("BackendStub", (), {"key": "mlx", "label": "MLX Apple Silicon"})(),
+        )
 
     def list_models(self) -> list[dict]:
         return [
@@ -119,7 +129,14 @@ class DummyRegistry(ModelRegistry):
                     },
                     "load": {
                         "failures": {},
-                        "duration_ms": {"mlx": {"count": 1, "avg_ms": 1.0, "max_ms": 1.0, "last_ms": 1.0}},
+                        "duration_ms": {
+                            "mlx": {
+                                "count": 1,
+                                "avg_ms": 1.0,
+                                "max_ms": 1.0,
+                                "last_ms": 1.0,
+                            }
+                        },
                     },
                 },
                 "operational": {
@@ -134,7 +151,17 @@ class DummyRegistry(ModelRegistry):
                     },
                     "models": {
                         "cache": {"hit": {"mlx": 1}, "miss": {"mlx": 1}},
-                        "load": {"failures": {}, "duration_ms": {"mlx": {"count": 1, "avg_ms": 1.0, "max_ms": 1.0, "last_ms": 1.0}}},
+                        "load": {
+                            "failures": {},
+                            "duration_ms": {
+                                "mlx": {
+                                    "count": 1,
+                                    "avg_ms": 1.0,
+                                    "max_ms": 1.0,
+                                    "last_ms": 1.0,
+                                }
+                            },
+                        },
                     },
                 },
             },
@@ -266,20 +293,28 @@ class DummyTTSService:
     def __init__(self, settings: ServerSettings):
         self.settings = settings
         self.last_clone_request = None
+        self.last_custom_request = None
+        self.last_design_request = None
 
     def synthesize_custom(self, request):
+        self.last_custom_request = request
         return GenerationResult(
             audio=_audio_result(self.settings.outputs_dir / "dummy_custom.wav"),
-            saved_path=(self.settings.outputs_dir / "saved_custom.wav") if request.save_output else None,
+            saved_path=(self.settings.outputs_dir / "saved_custom.wav")
+            if request.save_output
+            else None,
             model=request.model or "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
             mode="custom",
             backend="mlx",
         )
 
     def synthesize_design(self, request):
+        self.last_design_request = request
         return GenerationResult(
             audio=_audio_result(self.settings.outputs_dir / "dummy_design.wav"),
-            saved_path=(self.settings.outputs_dir / "saved_design.wav") if request.save_output else None,
+            saved_path=(self.settings.outputs_dir / "saved_design.wav")
+            if request.save_output
+            else None,
             model=request.model or "Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
             mode="design",
             backend="mlx",
@@ -289,7 +324,9 @@ class DummyTTSService:
         self.last_clone_request = request
         return GenerationResult(
             audio=_audio_result(self.settings.outputs_dir / "dummy_clone.wav"),
-            saved_path=(self.settings.outputs_dir / "saved_clone.wav") if request.save_output else None,
+            saved_path=(self.settings.outputs_dir / "saved_clone.wav")
+            if request.save_output
+            else None,
             model=request.model or "Qwen3-TTS-12Hz-1.7B-Base-8bit",
             mode="clone",
             backend="mlx",
@@ -306,7 +343,9 @@ class FailingTTSService(DummyTTSService):
 
 class BusyTTSService(DummyTTSService):
     def synthesize_custom(self, request):
-        raise InferenceBusyError("Inference is already in progress", details={"queue_depth": 1})
+        raise InferenceBusyError(
+            "Inference is already in progress", details={"queue_depth": 1}
+        )
 
 
 class MissingModelTTSService(DummyTTSService):
@@ -337,7 +376,9 @@ class SlowTTSService(DummyTTSService):
 
 class WorkerFailingTTSService(DummyTTSService):
     def synthesize_custom(self, request):
-        raise TTSGenerationError("worker execution failed", details={"failure_kind": "worker_exception"})
+        raise TTSGenerationError(
+            "worker execution failed", details={"failure_kind": "worker_exception"}
+        )
 
 
 class DegradedRegistry(DummyRegistry):
@@ -349,7 +390,12 @@ class DegradedRegistry(DummyRegistry):
         report["preload"]["status"] = "failed"
         report["preload"]["failed"] = 1
         report["preload"]["failed_model_ids"] = ["Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"]
-        report["preload"]["errors"] = [{"model": "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit", "reason": "missing_artifacts"}]
+        report["preload"]["errors"] = [
+            {
+                "model": "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                "reason": "missing_artifacts",
+            }
+        ]
         report["items"][0]["runtime_ready"] = False
         report["items"][0]["preload"]["status"] = "failed"
         report["items"][0]["missing_artifacts"] = ["config.json"]

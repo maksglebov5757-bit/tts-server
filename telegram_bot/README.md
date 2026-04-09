@@ -69,29 +69,34 @@ Container image build and bot process startup were verified, but full external i
 |---|---|
 | `/start` | Show welcome message |
 | `/help` | Show help and available speakers |
-| `/tts` | Synthesize text with optional speaker and speed |
-| `/design` | Synthesize using a natural-language voice description |
-| `/clone` | Clone a voice from replied reference audio |
+| `/tts` | Synthesize text with optional speaker, speed, and language |
+| `/design` | Synthesize using a natural-language voice description and optional language |
+| `/clone` | Clone a voice from replied reference audio with optional language |
 
 ### `/tts` syntax
 
 ```text
-/tts [-- speaker=<speaker>] [-- speed=<speed>] -- <text>
+/tts [speaker=<speaker>] [speed=<speed>] [lang=<language>] -- <text>
 ```
+
+Omitted `lang` defaults to `auto`.
 
 ### `/design` syntax
 
 ```text
-/design <voice_description> -- <text>
+/design [lang=<language>] <voice_description> -- <text>
 ```
+
+Omitted `lang` defaults to `auto`.
 
 ### `/clone` syntax
 
 ```text
-/clone [-- ref=<transcript>] -- <text>
+/clone [lang=<language>] [ref=<transcript>] -- <text>
 ```
 
 For `/clone`, the command must be sent as a reply to a message containing reference audio.
+Omitted `lang` defaults to `auto`.
 
 ## Supported clone media
 

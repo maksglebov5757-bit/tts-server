@@ -54,12 +54,14 @@ LOGGER = get_logger(__name__)
 
 class MessageSender(Protocol):
     """Protocol for sending messages to Telegram."""
-    
-    async def send_text(self, chat_id: int, text: str) -> None:
+
+    async def send_text(self, chat_id: int, text: str) -> Any:
         """Send text message to chat."""
         ...
-    
-    async def send_voice(self, chat_id: int, audio_bytes: bytes, caption: str | None = None) -> None:
+
+    async def send_voice(
+        self, chat_id: int, audio_bytes: bytes, caption: str | None = None
+    ) -> Any:
         """Send voice message to chat."""
         ...
 
@@ -67,18 +69,18 @@ class MessageSender(Protocol):
 class CommandDispatcher:
     """
     Command dispatcher that routes Telegram commands to handlers.
-    
+
     This class implements the async UX pattern with full observability:
     1. Acknowledge command immediately
     2. Process in background
     3. Send result when ready
-    
+
     Features:
     - Command metrics (received, accepted, rejected)
     - Correlation context for tracing
     - Structured logging
     """
-    
+
     # Response templates
     START_MESSAGE = (
         "👋 *Добро пожаловать в Qwen3 TTS Bot*\n\n"
@@ -95,11 +97,11 @@ class CommandDispatcher:
         "• `/clone` — клонирование голоса из reply на audio\n\n"
         "*Быстрый старт:*\n"
         "`/tts -- Привет, это тест`\n"
-        "`/tts speaker=Ryan speed=0.9 -- Привет, это тест`\n"
-        "`/design calm narrator -- Привет, мир`\n\n"
+        "`/tts speaker=Ryan speed=0.9 lang=ru -- Привет, это тест`\n"
+        "`/design lang=ru calm narrator -- Привет, мир`\n\n"
         "Для `/clone` сначала отправьте `voice`, `audio` или `document`, затем ответьте на это сообщение командой `/clone ...`."
     )
-    
+
     HELP_MESSAGE = (
         "📖 *Справка по командам*\n\n"
         "Бот работает только в *личном чате*. Все результаты приходят отдельным *voice* сообщением после завершения генерации.\n\n"
@@ -107,21 +109,22 @@ class CommandDispatcher:
         "`/tts -- <текст>`\n"
         "`/tts speaker=<speaker> -- <текст>`\n"
         "`/tts speed=<speed> -- <текст>`\n"
-        "`/tts speaker=<speaker> speed=<speed> -- <текст>`\n\n"
+        "`/tts speaker=<speaker> speed=<speed> lang=<language> -- <текст>`\n\n"
         "*Параметры /tts:*\n"
         "• `speaker` — имя голоса\n"
         "• `speed` — скорость от 0.5 до 2.0\n"
+        "• `lang` — язык, по умолчанию `auto`\n"
         "• если параметры не нужны, используйте `/tts -- текст`\n\n"
         "*Доступные голоса:*\n"
         "{speakers}\n\n"
         "*2. Voice Design*\n"
-        "`/design <описание_голоса> -- <текст>`\n"
-        "Пример: `/design calm documentary narrator -- Расскажи о космосе`\n\n"
+        "`/design [lang=<language>] <описание_голоса> -- <текст>`\n"
+        "Пример: `/design lang=ru calm documentary narrator -- Расскажи о космосе`\n\n"
         "*3. Voice Cloning*\n"
         "Сначала отправьте `voice`, `audio` или `document` с поддерживаемым аудио, затем *ответьте* на это сообщение одной из команд:\n"
-        "`/clone -- <текст>`\n"
-        "`/clone ref=<транскрипт> -- <текст>`\n"
-        "Пример: reply на audio → `/clone ref=This is my sample -- Скажи это моим голосом`\n\n"
+        "`/clone [lang=<language>] -- <текст>`\n"
+        "`/clone [lang=<language>] ref=<транскрипт> -- <текст>`\n"
+        "Пример: reply на audio → `/clone lang=ru ref=This is my sample -- Скажи это моим голосом`\n\n"
         "*Важно:*\n"
         "• разделитель `--` обязателен для `/tts`, `/design` и `/clone`\n"
         "• `/clone` работает только как reply на аудио\n"
@@ -129,35 +132,35 @@ class CommandDispatcher:
         "• если команда отклонена, бот пришлёт понятную ошибку с подсказкой\n"
         "• если запрос принят, результат придёт отдельным сообщением"
     )
-    
+
     PROCESSING_MESSAGE = "🎙️ *Обработка запущена*\nСейчас подготовлю результат и пришлю его отдельным voice сообщением."
-    
+
     ACCEPTED_MESSAGE = (
         "✅ *Запрос принят*\n\n"
-        "Озвучиваю текст голосом *{speaker}* со скоростью *{speed}x*.\n"
+        "Озвучиваю текст голосом *{speaker}* со скоростью *{speed}x* и языком *{language}*.\n"
         "Когда генерация завершится, я пришлю отдельное voice сообщение."
     )
-    
+
     DESIGN_ACCEPTED_MESSAGE = (
         "✅ *Запрос принят*\n\n"
-        "Создаю голос по описанию: *{voice_description}*.\n"
+        "Создаю голос по описанию: *{voice_description}*. Язык: *{language}*.\n"
         "Когда генерация завершится, я пришлю отдельное voice сообщение."
     )
-    
+
     CLONE_ACCEPTED_MESSAGE = (
         "✅ *Запрос принят*\n\n"
-        "Использую аудио из reply-сообщения как reference и запускаю клонирование.\n"
+        "Использую аудио из reply-сообщения как reference, язык *{language}*, и запускаю клонирование.\n"
         "Когда генерация завершится, я пришлю отдельное voice сообщение или понятную ошибку, если reference audio не подошёл."
     )
-    
+
     SUCCESS_TEMPLATE = (
         "✅ *Готово*\n\n"
         "Сгенерировано voice сообщение длительностью около *{duration:.1f} с* голосом *{speaker}*.\n\n"
-        "Текст: \"{text}\""
+        'Текст: "{text}"'
     )
-    
+
     ERROR_TEMPLATE = "❌ *Ошибка*\n{error}\n\nОткройте `/help`, чтобы посмотреть корректный синтаксис команд и примеры."
-    
+
     def __init__(
         self,
         synthesizer: TTSSynthesizer,
@@ -171,7 +174,7 @@ class CommandDispatcher:
     ):
         """
         Initialize command dispatcher.
-        
+
         Args:
             synthesizer: TTS synthesizer instance (used for direct synthesis fallback)
             settings: Telegram settings
@@ -191,17 +194,17 @@ class CommandDispatcher:
         self._delivery_store = delivery_store
         self._client = client
         self._rate_limiter = rate_limiter
-    
+
     @property
     def _use_job_model(self) -> bool:
         """Whether to use job model for TTS (Stage 2)."""
         return self._job_orchestrator is not None and self._delivery_store is not None
-    
+
     def _get_help_message(self) -> str:
         """Get formatted help message with available speakers."""
         speakers = ", ".join(get_valid_speakers())
         return self.HELP_MESSAGE.format(speakers=speakers)
-    
+
     async def handle_update(
         self,
         text: str,
@@ -213,7 +216,7 @@ class CommandDispatcher:
     ) -> None:
         """
         Handle incoming Telegram update.
-        
+
         Args:
             text: Message text
             user_id: Telegram user ID
@@ -233,7 +236,7 @@ class CommandDispatcher:
             chat_type=chat_type,
             message_length=len(text) if text else 0,
         )
-        
+
         # Check if private chat
         if not is_private_chat(chat_type):
             log_telegram_event(
@@ -247,7 +250,7 @@ class CommandDispatcher:
             )
             # Silently ignore non-private chats for security
             return
-        
+
         # Check user allowlist
         if not self._settings.is_user_allowed(user_id):
             log_telegram_event(
@@ -264,7 +267,7 @@ class CommandDispatcher:
                 "⛔ *Access Denied*\n\nYou are not authorized to use this bot.",
             )
             return
-        
+
         # Parse command
         parsed = parse_command(
             text,
@@ -276,15 +279,17 @@ class CommandDispatcher:
         if parsed is None:
             # Not a command, ignore
             return
-        
+
         # Track command received
         command_name = parsed.command.value
         self._metrics.command_received(command_name)
-        
+
         if self._rate_limiter is not None and self._rate_limiter.is_enabled:
             decision = self._rate_limiter.check_and_consume(user_id)
             if not decision.allowed:
-                retry_after_seconds = max(1, math.ceil(decision.retry_after_seconds or 0.0))
+                retry_after_seconds = max(
+                    1, math.ceil(decision.retry_after_seconds or 0.0)
+                )
                 log_telegram_event(
                     self._logger,
                     level=logging.WARNING,
@@ -305,10 +310,10 @@ class CommandDispatcher:
                     ),
                 )
                 return
-        
+
         # Route to appropriate handler
         await self._route_command(parsed)
-    
+
     async def _route_command(self, parsed: ParsedCommand) -> None:
         """Route parsed command to handler."""
         handlers: dict[CommandType, Callable[[ParsedCommand], Awaitable[None]]] = {
@@ -319,14 +324,14 @@ class CommandDispatcher:
             CommandType.CLONE: self._handle_clone,
             CommandType.UNKNOWN: self._handle_unknown,
         }
-        
+
         handler = handlers.get(parsed.command, self._handle_unknown)
-        
+
         # Track command accepted
         self._metrics.command_accepted(parsed.command.value)
-        
+
         await handler(parsed)
-    
+
     async def _handle_start(self, parsed: ParsedCommand) -> None:
         """Handle /start command."""
         log_telegram_event(
@@ -337,9 +342,9 @@ class CommandDispatcher:
             user_id=parsed.user_id,
             chat_id=parsed.chat_id,
         )
-        
+
         await self._sender.send_text(parsed.chat_id, self.START_MESSAGE)
-    
+
     async def _handle_help(self, parsed: ParsedCommand) -> None:
         """Handle /help command."""
         log_telegram_event(
@@ -350,13 +355,13 @@ class CommandDispatcher:
             user_id=parsed.user_id,
             chat_id=parsed.chat_id,
         )
-        
+
         await self._sender.send_text(parsed.chat_id, self._get_help_message())
-    
+
     async def _handle_tts(self, parsed: ParsedCommand) -> None:
         """Handle /tts command with async UX."""
         command_name = parsed.command.value
-        
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -366,9 +371,11 @@ class CommandDispatcher:
             chat_id=parsed.chat_id,
             text_length=len(parsed.args),
         )
-        
+
         # Validate command syntax first
-        validation = validate_tts_command(parsed, self._settings.telegram_max_text_length)
+        validation = validate_tts_command(
+            parsed, self._settings.telegram_max_text_length
+        )
         if not validation.is_valid:
             log_telegram_event(
                 self._logger,
@@ -380,15 +387,15 @@ class CommandDispatcher:
                 reason="validation_failed",
                 error=validation.error_message,
             )
-            
+
             self._metrics.command_rejected(command_name, "validation_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(error=validation.error_message),
             )
             return
-        
+
         # Parse TTS arguments for speaker and speed
         tts_args = parse_tts_args(parsed.args)
         if tts_args is None:
@@ -402,9 +409,9 @@ class CommandDispatcher:
                 chat_id=parsed.chat_id,
                 reason="parse_failed",
             )
-            
+
             self._metrics.command_rejected(command_name, "parse_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -412,23 +419,24 @@ class CommandDispatcher:
                 ),
             )
             return
-        
+
         # Track command accepted
         self._metrics.command_accepted(command_name)
-        
+
         # Determine effective speaker and speed
         effective_speaker = tts_args.speaker or self._settings.telegram_default_speaker
         effective_speed = tts_args.speed or 1.0
-        
+
         # Acknowledge with details
         await self._sender.send_text(
             parsed.chat_id,
             self.ACCEPTED_MESSAGE.format(
                 speaker=effective_speaker,
                 speed=effective_speed,
+                language=tts_args.language,
             ),
         )
-        
+
         # Stage 2: Use job model if available
         if self._use_job_model:
             await self._handle_tts_via_job(
@@ -437,6 +445,7 @@ class CommandDispatcher:
                 tts_args.text,
                 effective_speaker,
                 effective_speed,
+                tts_args.language,
             )
         else:
             # Fallback to direct synthesis
@@ -445,8 +454,9 @@ class CommandDispatcher:
                 tts_args.text,
                 effective_speaker,
                 effective_speed,
+                tts_args.language,
             )
-    
+
     async def _handle_tts_via_job(
         self,
         chat_id: int,
@@ -454,15 +464,21 @@ class CommandDispatcher:
         text: str,
         speaker: str,
         speed: float,
+        language: str,
     ) -> None:
         """
         Handle TTS via job model (Stage 2).
-        
+
         Creates a job for TTS synthesis and delivery metadata.
         Job completion and delivery is handled by TelegramJobPoller.
         """
         from telegram_bot.observability import METRICS
-        
+
+        assert self._job_orchestrator is not None
+        assert self._delivery_store is not None
+        job_orchestrator = self._job_orchestrator
+        delivery_store = self._delivery_store
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -473,17 +489,19 @@ class CommandDispatcher:
             text_length=len(text),
             speaker=speaker,
             speed=speed,
+            language=language,
         )
-        
+
         # Submit job through orchestrator
-        result = self._job_orchestrator.submit_tts_job(
+        result = job_orchestrator.submit_tts_job(
             text=text,
             speaker=speaker,
             speed=speed,
+            language=language,
             chat_id=chat_id,
             message_id=message_id,
         )
-        
+
         if result.success:
             if result.is_duplicate:
                 # Job already exists, just acknowledge
@@ -499,7 +517,7 @@ class CommandDispatcher:
                 )
             else:
                 # Create delivery metadata
-                await self._delivery_store.create(
+                await delivery_store.create(
                     chat_id=chat_id,
                     message_id=message_id,
                     job_id=result.job_id,
@@ -524,13 +542,14 @@ class CommandDispatcher:
                     error=f"Failed to submit job: {result.error_message}"
                 ),
             )
-    
+
     async def _process_tts_async(
         self,
         chat_id: int,
         text: str,
         speaker: str,
         speed: float,
+        language: str,
     ) -> None:
         """Process TTS synthesis and send result."""
         log_telegram_event(
@@ -542,14 +561,16 @@ class CommandDispatcher:
             text_length=len(text),
             speaker=speaker,
             speed=speed,
+            language=language,
         )
-        
+
         result = await self._synthesizer.synthesize(
             text,
             speaker=speaker,
             speed=speed,
+            language=language,
         )
-        
+
         if result.success:
             log_telegram_event(
                 self._logger,
@@ -560,25 +581,40 @@ class CommandDispatcher:
                 duration_ms=result.duration_ms,
                 audio_size_bytes=len(result.audio_bytes) if result.audio_bytes else 0,
                 speaker=speaker,
+                language=language,
             )
-            
+
             # Estimate duration from audio size (rough approximation)
             # Assuming ~12KB per second for OGG at typical settings
             est_duration = len(result.audio_bytes) / 12000 if result.audio_bytes else 0
-            
+
             caption = self.SUCCESS_TEMPLATE.format(
                 duration=est_duration,
                 speaker=speaker,
                 text=text[:100] + "..." if len(text) > 100 else text,
             )
-            
+
+            if result.audio_bytes is None:
+                await self._sender.send_text(
+                    chat_id,
+                    self.ERROR_TEMPLATE.format(
+                        error="Synthesis completed without audio data"
+                    ),
+                )
+                return
+
+            audio_bytes = result.audio_bytes
+
             # Send voice with retry
             delivery_result = await self._sender.send_voice(
                 chat_id,
-                result.audio_bytes,
+                audio_bytes,
                 caption=caption,
             )
-            
+
+            if delivery_result is None:
+                return
+
             if delivery_result.success:
                 log_telegram_event(
                     self._logger,
@@ -611,23 +647,28 @@ class CommandDispatcher:
                 duration_ms=result.duration_ms,
                 speaker=speaker,
             )
-            
+
             await self._sender.send_text(
                 chat_id,
-                self.ERROR_TEMPLATE.format(error=result.error_message or "Unknown error during synthesis"),
+                self.ERROR_TEMPLATE.format(
+                    error=result.error_message or "Unknown error during synthesis"
+                ),
             )
-    
+
     async def _handle_design(self, parsed: ParsedCommand) -> None:
         """
         Handle /design command with async UX (Stage 3 Voice Design).
-        
+
         Creates a job for voice design synthesis and delivery metadata.
         Job completion and delivery is handled by TelegramJobPoller.
         """
-        from telegram_bot.handlers.commands import MAX_TEXT_LENGTH, MAX_VOICE_DESCRIPTION_LENGTH
-        
+        from telegram_bot.handlers.commands import (
+            MAX_TEXT_LENGTH,
+            MAX_VOICE_DESCRIPTION_LENGTH,
+        )
+
         command_name = parsed.command.value
-        
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -637,7 +678,7 @@ class CommandDispatcher:
             chat_id=parsed.chat_id,
             text_length=len(parsed.args),
         )
-        
+
         # Validate command syntax
         validation = validate_design_command(
             parsed,
@@ -655,15 +696,15 @@ class CommandDispatcher:
                 reason="validation_failed",
                 error=validation.error_message,
             )
-            
+
             self._metrics.command_rejected(command_name, "validation_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(error=validation.error_message),
             )
             return
-        
+
         # Parse design arguments
         design_args = parse_design_args(parsed.args)
         if design_args is None:
@@ -676,9 +717,9 @@ class CommandDispatcher:
                 chat_id=parsed.chat_id,
                 reason="parse_failed",
             )
-            
+
             self._metrics.command_rejected(command_name, "parse_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -686,10 +727,10 @@ class CommandDispatcher:
                 ),
             )
             return
-        
+
         # Track command accepted
         self._metrics.command_accepted(command_name)
-        
+
         # Acknowledge with voice description preview
         voice_preview = (
             design_args.voice_description[:50] + "..."
@@ -700,9 +741,10 @@ class CommandDispatcher:
             parsed.chat_id,
             self.DESIGN_ACCEPTED_MESSAGE.format(
                 voice_description=voice_preview,
+                language=design_args.language,
             ),
         )
-        
+
         # Stage 3: Use job model for design
         if self._use_job_model:
             await self._handle_design_via_job(
@@ -710,6 +752,7 @@ class CommandDispatcher:
                 parsed.message_id,
                 design_args.voice_description,
                 design_args.text,
+                design_args.language,
             )
         else:
             # Fallback to direct synthesis
@@ -717,23 +760,30 @@ class CommandDispatcher:
                 parsed.chat_id,
                 design_args.voice_description,
                 design_args.text,
+                design_args.language,
             )
-    
+
     async def _handle_design_via_job(
         self,
         chat_id: int,
         message_id: int,
         voice_description: str,
         text: str,
+        language: str,
     ) -> None:
         """
         Handle Voice Design via job model (Stage 3).
-        
+
         Creates a job for voice design synthesis and delivery metadata.
         Job completion and delivery is handled by TelegramJobPoller.
         """
         from telegram_bot.observability import METRICS
-        
+
+        assert self._job_orchestrator is not None
+        assert self._delivery_store is not None
+        job_orchestrator = self._job_orchestrator
+        delivery_store = self._delivery_store
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -743,16 +793,18 @@ class CommandDispatcher:
             message_id=message_id,
             voice_description_length=len(voice_description),
             text_length=len(text),
+            language=language,
         )
-        
+
         # Submit job through orchestrator
-        result = self._job_orchestrator.submit_design_job(
+        result = job_orchestrator.submit_design_job(
             voice_description=voice_description,
             text=text,
+            language=language,
             chat_id=chat_id,
             message_id=message_id,
         )
-        
+
         if result.success:
             if result.is_duplicate:
                 METRICS.jobs_duplicate()
@@ -766,7 +818,7 @@ class CommandDispatcher:
                     job_id=result.job_id,
                 )
             else:
-                await self._delivery_store.create(
+                await delivery_store.create(
                     chat_id=chat_id,
                     message_id=message_id,
                     job_id=result.job_id,
@@ -789,12 +841,13 @@ class CommandDispatcher:
                     error=f"Failed to submit design job: {result.error_message}"
                 ),
             )
-    
+
     async def _process_design_async(
         self,
         chat_id: int,
         voice_description: str,
         text: str,
+        language: str,
     ) -> None:
         """Process Voice Design synthesis and send result."""
         log_telegram_event(
@@ -805,13 +858,15 @@ class CommandDispatcher:
             chat_id=chat_id,
             voice_description_length=len(voice_description),
             text_length=len(text),
+            language=language,
         )
-        
+
         result = await self._synthesizer.synthesize_design(
             voice_description=voice_description,
             text=text,
+            language=language,
         )
-        
+
         if result.success:
             log_telegram_event(
                 self._logger,
@@ -822,20 +877,34 @@ class CommandDispatcher:
                 duration_ms=result.duration_ms,
                 audio_size_bytes=len(result.audio_bytes) if result.audio_bytes else 0,
             )
-            
+
             est_duration = len(result.audio_bytes) / 12000 if result.audio_bytes else 0
-            
+
             if len(text) > 100:
-                caption = f"✅ *Done!*\n\nGenerated voice design ({est_duration:.1f}s)\n\n\"{text[:100]}...\""
+                caption = f'✅ *Done!*\n\nGenerated voice design ({est_duration:.1f}s)\n\n"{text[:100]}..."'
             else:
-                caption = f"✅ *Done!*\n\nGenerated voice design ({est_duration:.1f}s)\n\n\"{text}\""
-            
+                caption = f'✅ *Done!*\n\nGenerated voice design ({est_duration:.1f}s)\n\n"{text}"'
+
+            if result.audio_bytes is None:
+                await self._sender.send_text(
+                    chat_id,
+                    self.ERROR_TEMPLATE.format(
+                        error="Synthesis completed without audio data"
+                    ),
+                )
+                return
+
+            audio_bytes = result.audio_bytes
+
             delivery_result = await self._sender.send_voice(
                 chat_id,
-                result.audio_bytes,
+                audio_bytes,
                 caption=caption,
             )
-            
+
+            if delivery_result is None:
+                return
+
             if delivery_result.success:
                 log_telegram_event(
                     self._logger,
@@ -867,26 +936,26 @@ class CommandDispatcher:
                 error=result.error_message,
                 duration_ms=result.duration_ms,
             )
-            
+
             await self._sender.send_text(
                 chat_id,
-                self.ERROR_TEMPLATE.format(error=result.error_message or "Unknown error during synthesis"),
+                self.ERROR_TEMPLATE.format(
+                    error=result.error_message or "Unknown error during synthesis"
+                ),
             )
-
-
 
     async def _handle_clone(self, parsed: ParsedCommand) -> None:
         """
         Handle /clone command with async UX (Stage 4 Voice Cloning).
-        
+
         This command requires a reply to a message with media (voice, audio, or document).
         The reply should contain: /clone [-- ref=<transcript>] -- <text>
-        
+
         Creates a job for voice cloning synthesis and delivery metadata.
         Job completion and delivery is handled by TelegramJobPoller.
         """
         command_name = parsed.command.value
-        
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -896,7 +965,7 @@ class CommandDispatcher:
             chat_id=parsed.chat_id,
             text_length=len(parsed.args),
         )
-        
+
         # Validate command syntax
         validation = validate_clone_command(
             parsed,
@@ -913,15 +982,15 @@ class CommandDispatcher:
                 reason="validation_failed",
                 error=validation.error_message,
             )
-            
+
             self._metrics.command_rejected(command_name, "validation_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(error=validation.error_message),
             )
             return
-        
+
         # Parse clone arguments
         clone_args = parse_clone_args(parsed.args)
         if clone_args is None:
@@ -934,9 +1003,9 @@ class CommandDispatcher:
                 chat_id=parsed.chat_id,
                 reason="parse_failed",
             )
-            
+
             self._metrics.command_rejected(command_name, "parse_failed")
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -944,7 +1013,7 @@ class CommandDispatcher:
                 ),
             )
             return
-        
+
         if not self._use_job_model:
             # Clone is only supported via job model
             log_telegram_event(
@@ -955,7 +1024,7 @@ class CommandDispatcher:
                 user_id=parsed.user_id,
                 chat_id=parsed.chat_id,
             )
-            
+
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -977,7 +1046,9 @@ class CommandDispatcher:
 
         telegram_client = self._client or getattr(self._sender, "_client", None)
         if telegram_client is None:
-            self._metrics.command_rejected(command_name, "clone_media_client_unavailable")
+            self._metrics.command_rejected(
+                command_name, "clone_media_client_unavailable"
+            )
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -986,21 +1057,85 @@ class CommandDispatcher:
             )
             return
 
+        command_message_id = parsed.message_id
+        reply_message_id = reply_message.get("message_id") or parsed.message_id
+        media_kinds = [
+            kind for kind in ("voice", "audio", "document") if reply_message.get(kind)
+        ]
+        media_kind = media_kinds[0] if media_kinds else "unknown"
+
+        log_telegram_event(
+            self._logger,
+            level=logging.INFO,
+            event="telegram.command.clone.media_stage_started",
+            message="Starting clone reference media staging",
+            user_id=parsed.user_id,
+            chat_id=parsed.chat_id,
+            message_id=command_message_id,
+            reply_message_id=reply_message_id,
+            media_kind=media_kind,
+        )
+
         try:
-            staged_media, _ = await stage_clone_media(
+            staged_media, validation = await stage_clone_media(
                 client=telegram_client,
                 message=reply_message,
                 settings=self._settings,
             )
+            ref_audio_path = str(staged_media.get_audio_path())
+
+            log_telegram_event(
+                self._logger,
+                level=logging.INFO,
+                event="telegram.command.clone.media_stage_completed",
+                message="Clone reference media staged successfully",
+                user_id=parsed.user_id,
+                chat_id=parsed.chat_id,
+                message_id=command_message_id,
+                reply_message_id=reply_message_id,
+                media_kind=media_kind,
+                staged_audio_path=ref_audio_path,
+                was_converted=staged_media.was_converted,
+                content_type=validation.content_type,
+                file_size=validation.file_size,
+            )
         except MediaValidationError as exc:
             self._metrics.command_rejected(command_name, "invalid_reference_media")
+            log_telegram_event(
+                self._logger,
+                level=logging.WARNING,
+                event="telegram.command.clone.media_stage_failed",
+                message="Clone reference media validation failed",
+                user_id=parsed.user_id,
+                chat_id=parsed.chat_id,
+                message_id=command_message_id,
+                reply_message_id=reply_message_id,
+                media_kind=media_kind,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(error=str(exc)),
             )
             return
         except DownloadError as exc:
-            self._metrics.command_rejected(command_name, "reference_media_download_failed")
+            self._metrics.command_rejected(
+                command_name, "reference_media_download_failed"
+            )
+            log_telegram_event(
+                self._logger,
+                level=logging.ERROR,
+                event="telegram.command.clone.media_stage_failed",
+                message="Clone reference media download failed",
+                user_id=parsed.user_id,
+                chat_id=parsed.chat_id,
+                message_id=command_message_id,
+                reply_message_id=reply_message_id,
+                media_kind=media_kind,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
             await self._sender.send_text(
                 parsed.chat_id,
                 self.ERROR_TEMPLATE.format(
@@ -1008,43 +1143,69 @@ class CommandDispatcher:
                 ),
             )
             return
+        except Exception as exc:
+            self._metrics.command_rejected(command_name, "reference_media_stage_failed")
+            log_telegram_event(
+                self._logger,
+                level=logging.ERROR,
+                event="telegram.command.clone.media_stage_failed",
+                message="Clone reference media staging failed unexpectedly",
+                user_id=parsed.user_id,
+                chat_id=parsed.chat_id,
+                message_id=command_message_id,
+                reply_message_id=reply_message_id,
+                media_kind=media_kind,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            await self._sender.send_text(
+                parsed.chat_id,
+                self.ERROR_TEMPLATE.format(
+                    error="Не удалось подготовить reference audio для клонирования. Попробуйте отправить аудио ещё раз."
+                ),
+            )
+            return
 
         # Track command accepted
         self._metrics.command_accepted(command_name)
-        
+
         # Acknowledge
         await self._sender.send_text(
             parsed.chat_id,
-            self.CLONE_ACCEPTED_MESSAGE,
+            self.CLONE_ACCEPTED_MESSAGE.format(language=clone_args.language),
         )
-
-        reply_message_id = reply_message.get("message_id") or parsed.message_id
-        ref_audio_path = str(staged_media.get_audio_path())
 
         await self._handle_clone_via_job(
             parsed.chat_id,
-            reply_message_id,
+            command_message_id,
             clone_args.text,
             clone_args.ref_text,
+            clone_args.language,
             ref_audio_path,
         )
-    
+
     async def _handle_clone_via_job(
         self,
         chat_id: int,
         message_id: int,
         text: str,
         ref_text: str | None,
+        language: str,
         ref_audio_path: str,
     ) -> None:
         """
         Handle Voice Clone via job model (Stage 4).
-        
+
         Creates a job for voice cloning synthesis and delivery metadata.
         Job completion and delivery is handled by TelegramJobPoller.
         """
         from telegram_bot.observability import METRICS
-        
+
+        assert self._job_orchestrator is not None
+        assert self._delivery_store is not None
+        job_orchestrator = self._job_orchestrator
+        delivery_store = self._delivery_store
+
         log_telegram_event(
             self._logger,
             level=logging.INFO,
@@ -1054,32 +1215,40 @@ class CommandDispatcher:
             message_id=message_id,
             ref_text_provided=ref_text is not None,
             text_length=len(text),
+            language=language,
             ref_audio_path=ref_audio_path,
         )
-        
+
         # Submit job through orchestrator
-        result = self._job_orchestrator.submit_clone_job(
+        result = job_orchestrator.submit_clone_job(
             text=text,
             ref_text=ref_text,
+            language=language,
             chat_id=chat_id,
             message_id=message_id,
             ref_audio_path=ref_audio_path,
         )
-        
+
         if result.success:
             if result.is_duplicate:
                 METRICS.jobs_duplicate()
-                log_telegram_event(
-                    self._logger,
-                    level=logging.INFO,
-                    event="telegram.job.clone.duplicate",
-                    message="Duplicate clone job submission detected, reusing existing job",
+                await delivery_store.create(
                     chat_id=chat_id,
                     message_id=message_id,
                     job_id=result.job_id,
                 )
+                log_telegram_event(
+                    self._logger,
+                    level=logging.INFO,
+                    event="telegram.job.clone.duplicate",
+                    message="Duplicate clone job submission detected, re-queuing delivery for existing job",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    job_id=result.job_id,
+                    delivery_requeued=True,
+                )
             else:
-                await self._delivery_store.create(
+                await delivery_store.create(
                     chat_id=chat_id,
                     message_id=message_id,
                     job_id=result.job_id,
@@ -1114,14 +1283,14 @@ class CommandDispatcher:
             chat_id=parsed.chat_id,
             raw_command=parsed.raw_text,
         )
-        
+
         self._metrics.command_rejected("unknown", "unknown_command")
-        
+
         await self._sender.send_text(
             parsed.chat_id,
             "🤔 *Unknown command*\n\nUse /help to see available commands.",
         )
-    
+
     @property
     def _metrics(self):
         """Access metrics singleton."""

@@ -47,12 +47,13 @@ runtime = build_cli_runtime(get_cli_settings())
 1. selecting a speaker
 2. selecting emotion or instruction
 3. choosing speed
-4. entering synthesis text
+4. choosing language (`auto` by default)
+5. entering synthesis text
 5. saving and optionally playing the result
 
 ### Voice design
 
-[`run_design_session()`](runtime.py:217) collects a natural-language voice description and then repeatedly synthesizes text with that designed voice profile.
+[`run_design_session()`](runtime.py:217) collects a natural-language voice description, prompts for language with default `auto`, and then repeatedly synthesizes text with that designed voice profile.
 
 ### Voice cloning
 
@@ -60,7 +61,7 @@ runtime = build_cli_runtime(get_cli_settings())
 
 - selecting saved voice profiles from [../.voices](../.voices)
 - enrolling a new voice profile from reference audio
-- running a quick one-off clone flow
+- running a quick one-off clone flow with language prompt defaulting to `auto`
 
 ## Shared directories
 

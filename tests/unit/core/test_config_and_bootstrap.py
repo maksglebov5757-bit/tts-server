@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from core.application.job_execution import InMemoryJobExecutor
-from core.bootstrap import build_job_artifact_store, build_job_execution_backend, build_job_metadata_store, build_runtime
+from core.bootstrap import (
+    build_job_artifact_store,
+    build_job_execution_backend,
+    build_job_metadata_store,
+    build_runtime,
+)
 from core.metrics import OperationalMetricsRegistry
 from core.config import (
     CoreSettings,
@@ -21,12 +26,15 @@ from core.config import (
     PROJECT_ROOT,
     parse_core_settings_from_env,
 )
-from core.infrastructure.job_execution_local import LocalBoundedExecutionManager, LocalInMemoryJobStore, LocalJobArtifactStore
+from core.infrastructure.job_execution_local import (
+    LocalBoundedExecutionManager,
+    LocalInMemoryJobStore,
+    LocalJobArtifactStore,
+)
 from tests.unit.core.test_job_execution import StubApplicationService
 
 
 pytestmark = pytest.mark.unit
-
 
 
 def test_parse_core_settings_from_env_uses_local_job_backend_defaults():
@@ -37,7 +45,11 @@ def test_parse_core_settings_from_env_uses_local_job_backend_defaults():
     assert values["job_artifact_backend"] == LOCAL_JOB_ARTIFACT_BACKEND
     assert values["auth_mode"] == "off"
     assert values["auth_static_bearer_token"] is None
-    assert values["model_manifest_path"] == (PROJECT_ROOT / "core" / "models" / "manifest.v1.json").resolve()
+    assert values["mlx_models_dir"] == (DEFAULT_MODELS_DIR / "mlx").resolve()
+    assert (
+        values["model_manifest_path"]
+        == (PROJECT_ROOT / "core" / "models" / "manifest.v1.json").resolve()
+    )
     assert values["model_preload_policy"] == "none"
     assert values["model_preload_ids"] == ()
     assert values["rate_limit_enabled"] is False
@@ -46,13 +58,13 @@ def test_parse_core_settings_from_env_uses_local_job_backend_defaults():
     assert values["quota_backend"] == LOCAL_QUOTA_BACKEND
 
 
-
 def test_parse_core_settings_from_env_reads_explicit_job_backends(tmp_path: Path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text("{}", encoding="utf-8")
     values = parse_core_settings_from_env(
         {
             "QWEN_TTS_MODELS_DIR": str(tmp_path / "models"),
+            "QWEN_TTS_MLX_MODELS_DIR": str(tmp_path / "mlx-models"),
             "QWEN_TTS_OUTPUTS_DIR": str(tmp_path / "outputs"),
             "QWEN_TTS_VOICES_DIR": str(tmp_path / "voices"),
             "QWEN_TTS_UPLOAD_STAGING_DIR": str(tmp_path / "uploads"),
@@ -82,6 +94,7 @@ def test_parse_core_settings_from_env_reads_explicit_job_backends(tmp_path: Path
     )
 
     assert values["model_manifest_path"] == manifest_path.resolve()
+    assert values["mlx_models_dir"] == (tmp_path / "mlx-models").resolve()
     assert values["model_preload_policy"] == "listed"
     assert values["model_preload_ids"] == ("model-a", "model-b")
     assert values["job_execution_backend"] == "future-executor"
@@ -108,9 +121,21 @@ def test_parse_core_settings_from_env_reads_explicit_job_backends(tmp_path: Path
 @pytest.mark.parametrize(
     ("factory_name", "settings_overrides", "expected_message"),
     [
-        ("artifact", {"job_artifact_backend": "s3"}, "Unsupported job artifact backend: s3"),
-        ("metadata", {"job_metadata_backend": "postgres"}, "Unsupported job metadata backend: postgres"),
-        ("execution", {"job_execution_backend": "redis"}, "Unsupported job execution backend: redis"),
+        (
+            "artifact",
+            {"job_artifact_backend": "s3"},
+            "Unsupported job artifact backend: s3",
+        ),
+        (
+            "metadata",
+            {"job_metadata_backend": "postgres"},
+            "Unsupported job metadata backend: postgres",
+        ),
+        (
+            "execution",
+            {"job_execution_backend": "redis"},
+            "Unsupported job execution backend: redis",
+        ),
     ],
 )
 def test_job_wiring_factories_reject_unknown_backend_ids(
@@ -120,6 +145,7 @@ def test_job_wiring_factories_reject_unknown_backend_ids(
 ):
     settings = CoreSettings(
         models_dir=DEFAULT_MODELS_DIR,
+        mlx_models_dir=DEFAULT_MODELS_DIR / "mlx",
         outputs_dir=DEFAULT_OUTPUTS_DIR,
         voices_dir=DEFAULT_VOICES_DIR,
         upload_staging_dir=DEFAULT_UPLOAD_STAGING_DIR,
@@ -135,15 +161,17 @@ def test_job_wiring_factories_reject_unknown_backend_ids(
             build_job_execution_backend(
                 settings,
                 store=LocalInMemoryJobStore(),
-                executor=InMemoryJobExecutor(application_service=StubApplicationService()),
+                executor=InMemoryJobExecutor(
+                    application_service=StubApplicationService()
+                ),
                 metrics=OperationalMetricsRegistry(),
             )
-
 
 
 def test_job_wiring_factories_keep_local_runtime_defaults():
     settings = CoreSettings(
         models_dir=DEFAULT_MODELS_DIR,
+        mlx_models_dir=DEFAULT_MODELS_DIR / "mlx",
         outputs_dir=DEFAULT_OUTPUTS_DIR,
         voices_dir=DEFAULT_VOICES_DIR,
         upload_staging_dir=DEFAULT_UPLOAD_STAGING_DIR,
@@ -165,7 +193,6 @@ def test_job_wiring_factories_keep_local_runtime_defaults():
     assert execution_backend.store is metadata_store
 
     execution_backend.stop()
-
 
 
 def test_build_runtime_passes_manifest_path_to_backend_registry(tmp_path: Path):
@@ -201,6 +228,7 @@ def test_build_runtime_passes_manifest_path_to_backend_registry(tmp_path: Path):
     )
     settings = CoreSettings(
         models_dir=tmp_path / "models",
+        mlx_models_dir=tmp_path / "mlx-models",
         outputs_dir=tmp_path / "outputs",
         voices_dir=tmp_path / "voices",
         upload_staging_dir=tmp_path / "uploads",
@@ -211,10 +239,21 @@ def test_build_runtime_passes_manifest_path_to_backend_registry(tmp_path: Path):
 
     runtime = build_runtime(settings)
 
-    assert runtime.backend_registry.model_specs[0].api_name == "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    assert (
+        runtime.backend_registry.model_specs[0].api_name
+        == "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    )
     assert runtime.backend_registry._model_manifest.metadata["catalog"] == "test"
+    assert runtime.backend_registry._backends["mlx"].models_dir == (
+        tmp_path / "mlx-models"
+    )
+    assert runtime.backend_registry._backends["torch"].models_dir == (
+        tmp_path / "models"
+    )
     assert runtime.registry.readiness_report()["preload"]["policy"] == "listed"
-    assert runtime.registry.readiness_report()["preload"]["requested_model_ids"] == ["Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"]
+    assert runtime.registry.readiness_report()["preload"]["requested_model_ids"] == [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+    ]
     assert runtime.metrics.readiness_summary()["execution"]["submitted"] == 0
     assert runtime.rate_limiter is not None
     assert runtime.quota_guard is not None

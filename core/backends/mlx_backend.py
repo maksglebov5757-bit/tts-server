@@ -45,6 +45,12 @@ REQUIRED_QWEN3_TALKER_FIELDS = (
     "rope_theta",
     "head_dim",
 )
+QWEN3_TOKENIZER_ARTIFACTS = (
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+    "tokenizer.json",
+)
 
 
 class MLXBackend(TTSBackend):
@@ -289,6 +295,7 @@ class MLXBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         speaker: str,
         instruct: str,
         speed: float,
@@ -297,6 +304,7 @@ class MLXBackend(TTSBackend):
             handle,
             text=text,
             output_dir=output_dir,
+            lang_code=language,
             voice=speaker,
             instruct=instruct,
             speed=speed,
@@ -308,12 +316,14 @@ class MLXBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         voice_description: str,
     ) -> None:
         self._generate(
             handle,
             text=text,
             output_dir=output_dir,
+            lang_code=language,
             instruct=voice_description,
         )
 
@@ -323,6 +333,7 @@ class MLXBackend(TTSBackend):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         ref_audio_path: Path,
         ref_text: str | None,
     ) -> None:
@@ -330,6 +341,7 @@ class MLXBackend(TTSBackend):
             handle,
             text=text,
             output_dir=output_dir,
+            lang_code=language,
             ref_audio=str(ref_audio_path),
             ref_text=ref_text or ".",
         )
@@ -385,6 +397,9 @@ class MLXBackend(TTSBackend):
             )
             self._observe_load_duration(timer.elapsed_ms)
             return runtime_model, model_path, False
+        except ModelLoadError:
+            self._observe_load_failure()
+            raise
         except Exception as exc:
             direct_error = exc
             if not self._should_retry_with_normalized_runtime(exc):
@@ -418,6 +433,9 @@ class MLXBackend(TTSBackend):
                 runtime_path=runtime_path,
                 normalized_runtime=True,
             )
+        except ModelLoadError:
+            self._observe_load_failure()
+            raise
         except Exception as exc:
             self._observe_load_failure()
             raise self._wrap_runtime_load_error(
@@ -462,7 +480,67 @@ class MLXBackend(TTSBackend):
                 spec=spec,
             )
 
+        self._validate_runtime_resources(
+            runtime_model=runtime_model,
+            model_path=model_path,
+            runtime_path=runtime_path,
+            normalized_runtime=normalized_runtime,
+            spec=spec,
+        )
+
         return runtime_model
+
+    def _validate_runtime_resources(
+        self,
+        *,
+        runtime_model: Any,
+        model_path: Path,
+        runtime_path: Path,
+        normalized_runtime: bool,
+        spec: ModelSpec,
+    ) -> None:
+        config = self._read_model_config(spec=spec, model_path=model_path)
+        if config.get("model_type") != "qwen3_tts":
+            return
+
+        tokenizer = getattr(runtime_model, "tokenizer", None)
+        if tokenizer is not None:
+            return
+
+        model_tokenizer_artifacts = self._collect_tokenizer_artifact_presence(
+            model_path
+        )
+        runtime_tokenizer_artifacts = self._collect_tokenizer_artifact_presence(
+            runtime_path
+        )
+        details = {
+            "model": spec.api_name,
+            "mode": spec.mode,
+            "backend": self.key,
+            "model_path": str(model_path),
+            "runtime_model_path": str(runtime_path),
+            "normalized_runtime": normalized_runtime,
+            "expected_runtime_resources": ["tokenizer"],
+            "tokenizer_initialized": False,
+            "runtime_model_class": type(runtime_model).__name__,
+            "tokenizer_artifacts": model_tokenizer_artifacts,
+            "runtime_tokenizer_artifacts": runtime_tokenizer_artifacts,
+        }
+        likely_cause = self._infer_qwen3_tokenizer_issue(model_tokenizer_artifacts)
+        if likely_cause is not None:
+            details["likely_cause"] = likely_cause
+
+        log_event(
+            LOGGER,
+            level=40,
+            event="mlx_backend.load.runtime_resources_invalid",
+            message="MLX runtime loaded without required tokenizer resources",
+            **details,
+        )
+        raise ModelLoadError(
+            "Qwen3-TTS MLX runtime loaded but tokenizer initialization failed",
+            details=details,
+        )
 
     def _rebind_runtime_resources(
         self,
@@ -721,6 +799,28 @@ class MLXBackend(TTSBackend):
             shutil.copytree(source, destination)
         else:
             shutil.copy2(source, destination)
+
+    @staticmethod
+    def _collect_tokenizer_artifact_presence(model_path: Path) -> dict[str, bool]:
+        return {
+            artifact_name: (model_path / artifact_name).exists()
+            for artifact_name in QWEN3_TOKENIZER_ARTIFACTS
+        }
+
+    @staticmethod
+    def _infer_qwen3_tokenizer_issue(
+        tokenizer_artifacts: dict[str, bool],
+    ) -> str | None:
+        if (
+            tokenizer_artifacts.get("vocab.json")
+            and not tokenizer_artifacts.get("merges.txt")
+            and not tokenizer_artifacts.get("tokenizer.json")
+        ):
+            return (
+                "Tokenizer assets appear incomplete for MLX runtime initialization: "
+                "`vocab.json` is present while both `merges.txt` and `tokenizer.json` are missing."
+            )
+        return None
 
     @staticmethod
     def _check_model_artifacts(model_path: Path) -> dict[str, Any]:

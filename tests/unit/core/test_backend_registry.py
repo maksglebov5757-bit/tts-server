@@ -7,7 +7,11 @@ import pytest
 from core.backends.base import LoadedModelHandle, TTSBackend
 from core.backends.capabilities import BackendCapabilitySet, BackendDiagnostics
 from core.backends.registry import BackendRegistry
-from core.errors import BackendCapabilityError, BackendNotAvailableError, ModelNotAvailableError
+from core.errors import (
+    BackendCapabilityError,
+    BackendNotAvailableError,
+    ModelNotAvailableError,
+)
 from core.models.catalog import MODEL_SPECS
 from core.services.model_registry import ModelRegistry
 
@@ -16,7 +20,14 @@ pytestmark = pytest.mark.unit
 
 
 class StubBackend(TTSBackend):
-    def __init__(self, *, key: str, available: bool, platform_supported: bool, missing_folders: set[str] | None = None):
+    def __init__(
+        self,
+        *,
+        key: str,
+        available: bool,
+        platform_supported: bool,
+        missing_folders: set[str] | None = None,
+    ):
         self.key = key
         self.label = key.upper()
         self._available = available
@@ -44,7 +55,12 @@ class StubBackend(TTSBackend):
         return Path(".models") / folder_name
 
     def load_model(self, spec):
-        return LoadedModelHandle(spec=spec, runtime_model=object(), resolved_path=Path(".models") / spec.folder, backend_key=self.key)
+        return LoadedModelHandle(
+            spec=spec,
+            runtime_model=object(),
+            resolved_path=Path(".models") / spec.folder,
+            backend_key=self.key,
+        )
 
     def inspect_model(self, spec):
         cached = spec.api_name in self.preloaded_specs
@@ -120,20 +136,46 @@ class StubBackend(TTSBackend):
             "errors": [],
         }
 
-    def synthesize_custom(self, handle, *, text: str, output_dir: Path, speaker: str, instruct: str, speed: float) -> None:
+    def synthesize_custom(
+        self,
+        handle,
+        *,
+        text: str,
+        output_dir: Path,
+        language: str,
+        speaker: str,
+        instruct: str,
+        speed: float,
+    ) -> None:
         return None
 
-    def synthesize_design(self, handle, *, text: str, output_dir: Path, voice_description: str) -> None:
+    def synthesize_design(
+        self,
+        handle,
+        *,
+        text: str,
+        output_dir: Path,
+        language: str,
+        voice_description: str,
+    ) -> None:
         return None
 
-    def synthesize_clone(self, handle, *, text: str, output_dir: Path, ref_audio_path: Path, ref_text: str | None) -> None:
+    def synthesize_clone(
+        self,
+        handle,
+        *,
+        text: str,
+        output_dir: Path,
+        language: str,
+        ref_audio_path: Path,
+        ref_text: str | None,
+    ) -> None:
         return None
 
 
 class NoAffinityBackend(StubBackend):
     def __init__(self):
         super().__init__(key="custom-backend", available=True, platform_supported=True)
-
 
 
 def test_backend_registry_prefers_explicit_backend():
@@ -150,19 +192,23 @@ def test_backend_registry_prefers_explicit_backend():
     assert registry.selection.selection_reason == "explicit_config"
 
 
-
 def test_backend_registry_raises_for_unknown_backend():
     with pytest.raises(BackendNotAvailableError):
-        BackendRegistry([StubBackend(key="mlx", available=True, platform_supported=True)], requested_backend="unknown", autoselect=True)
-
+        BackendRegistry(
+            [StubBackend(key="mlx", available=True, platform_supported=True)],
+            requested_backend="unknown",
+            autoselect=True,
+        )
 
 
 def test_backend_registry_rejects_unsupported_mode():
-    registry = BackendRegistry([StubBackend(key="clone-only", available=True, platform_supported=True)], autoselect=True)
+    registry = BackendRegistry(
+        [StubBackend(key="clone-only", available=True, platform_supported=True)],
+        autoselect=True,
+    )
 
     with pytest.raises(BackendCapabilityError):
         registry.ensure_mode_supported("design")
-
 
 
 def test_backend_registry_lists_selected_backend_metadata():
@@ -181,27 +227,36 @@ def test_backend_registry_lists_selected_backend_metadata():
     assert any(item["key"] == "mlx" and item["selected"] is False for item in payload)
 
 
-
 def test_backend_registry_resolves_model_spec_for_mode():
-    registry = BackendRegistry([StubBackend(key="torch", available=True, platform_supported=True)], requested_backend="torch", autoselect=True)
+    registry = BackendRegistry(
+        [StubBackend(key="torch", available=True, platform_supported=True)],
+        requested_backend="torch",
+        autoselect=True,
+    )
 
     spec = registry.get_model_spec(mode="custom")
 
     assert spec == MODEL_SPECS["1"]
 
 
-
 def test_backend_registry_prefers_highest_rollout_preference_for_mode():
-    registry = BackendRegistry([StubBackend(key="torch", available=True, platform_supported=True)], requested_backend="torch", autoselect=True)
+    registry = BackendRegistry(
+        [StubBackend(key="torch", available=True, platform_supported=True)],
+        requested_backend="torch",
+        autoselect=True,
+    )
 
     spec = registry.get_model_spec(mode="clone")
 
     assert spec == MODEL_SPECS["3"]
 
 
-
 def test_backend_registry_raises_model_not_available_for_unknown_model_identifier():
-    registry = BackendRegistry([StubBackend(key="torch", available=True, platform_supported=True)], requested_backend="torch", autoselect=True)
+    registry = BackendRegistry(
+        [StubBackend(key="torch", available=True, platform_supported=True)],
+        requested_backend="torch",
+        autoselect=True,
+    )
 
     with pytest.raises(ModelNotAvailableError) as exc_info:
         registry.get_model_spec(model_name="unknown-model")
@@ -214,7 +269,6 @@ def test_backend_registry_raises_model_not_available_for_unknown_model_identifie
     }
 
 
-
 def test_backend_registry_raises_model_not_available_when_mode_has_no_local_artifacts():
     registry = BackendRegistry(
         [
@@ -222,7 +276,11 @@ def test_backend_registry_raises_model_not_available_when_mode_has_no_local_arti
                 key="torch",
                 available=True,
                 platform_supported=True,
-                missing_folders={spec.folder for spec in MODEL_SPECS.values() if spec.mode == "custom"},
+                missing_folders={
+                    spec.folder
+                    for spec in MODEL_SPECS.values()
+                    if spec.mode == "custom"
+                },
             )
         ],
         requested_backend="torch",
@@ -240,9 +298,10 @@ def test_backend_registry_raises_model_not_available_when_mode_has_no_local_arti
     }
 
 
-
 def test_backend_registry_rejects_model_when_backend_is_not_in_affinity():
-    registry = BackendRegistry([NoAffinityBackend()], requested_backend="custom-backend", autoselect=True)
+    registry = BackendRegistry(
+        [NoAffinityBackend()], requested_backend="custom-backend", autoselect=True
+    )
 
     with pytest.raises(BackendCapabilityError) as exc_info:
         registry.get_model_spec(model_name=MODEL_SPECS["1"].api_name)
@@ -255,10 +314,11 @@ def test_backend_registry_rejects_model_when_backend_is_not_in_affinity():
     }
 
 
-
 def test_model_registry_applies_listed_preload_policy():
     backend = StubBackend(key="torch", available=True, platform_supported=True)
-    backend_registry = BackendRegistry([backend], requested_backend="torch", autoselect=True)
+    backend_registry = BackendRegistry(
+        [backend], requested_backend="torch", autoselect=True
+    )
 
     registry = ModelRegistry(
         backend_registry=backend_registry,

@@ -167,7 +167,7 @@ def test_normalized_runtime_loader_rebinds_resources_after_loading(
 
     monkeypatch.setattr(
         "core.backends.mlx_backend.load_model",
-        lambda path: loaded_paths.append(path) or SimpleNamespace(),
+        lambda path: loaded_paths.append(path) or SimpleNamespace(tokenizer=object()),
     )
 
     def fake_rebind(**kwargs):
@@ -185,3 +185,79 @@ def test_normalized_runtime_loader_rebinds_resources_after_loading(
 
     assert loaded_paths == [str(runtime_dir)]
     assert rebound_paths == [model_dir]
+
+
+def test_qwen3_runtime_load_fails_fast_when_tokenizer_not_initialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    backend = MLXBackend(models_dir=tmp_path)
+    spec = MODEL_SPECS["1"]
+    model_dir = tmp_path / spec.folder
+    _write_model_artifacts(model_dir, _make_nested_qwen3_config())
+
+    monkeypatch.setattr(
+        "core.backends.mlx_backend.load_model",
+        lambda path: SimpleNamespace(tokenizer=None),
+    )
+
+    with pytest.raises(ModelLoadError) as exc_info:
+        backend.load_model(spec)
+
+    details = exc_info.value.context.to_dict()
+    assert (
+        details["reason"]
+        == "Qwen3-TTS MLX runtime loaded but tokenizer initialization failed"
+    )
+    assert details["model"] == spec.api_name
+    assert details["mode"] == spec.mode
+    assert details["backend"] == "mlx"
+    assert details["model_path"] == str(model_dir)
+    assert details["runtime_model_path"] == str(model_dir)
+    assert details["normalized_runtime"] is False
+    assert details["expected_runtime_resources"] == ["tokenizer"]
+    assert details["tokenizer_initialized"] is False
+    assert details["tokenizer_artifacts"] == {
+        "tokenizer_config.json": True,
+        "vocab.json": True,
+        "merges.txt": False,
+        "tokenizer.json": False,
+    }
+    assert details["runtime_tokenizer_artifacts"] == details["tokenizer_artifacts"]
+    assert "vocab.json" in details["likely_cause"]
+    assert "merges.txt" in details["likely_cause"]
+
+
+def test_normalized_runtime_load_fails_fast_when_rebound_tokenizer_not_initialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    backend = MLXBackend(models_dir=tmp_path)
+    spec = MODEL_SPECS["1"]
+    model_dir = tmp_path / spec.folder
+    _write_model_artifacts(model_dir, _make_nested_qwen3_config())
+    runtime_dir = backend._prepare_runtime_model_path(spec=spec, model_path=model_dir)
+
+    monkeypatch.setattr(
+        "core.backends.mlx_backend.load_model",
+        lambda path: SimpleNamespace(tokenizer=object()),
+    )
+    monkeypatch.setattr(
+        backend,
+        "_rebind_runtime_resources",
+        lambda **kwargs: SimpleNamespace(tokenizer=None),
+    )
+
+    with pytest.raises(ModelLoadError) as exc_info:
+        backend._invoke_runtime_loader(
+            spec=spec,
+            model_path=model_dir,
+            runtime_path=runtime_dir,
+            normalized_runtime=True,
+        )
+
+    details = exc_info.value.context.to_dict()
+    assert details["normalized_runtime"] is True
+    assert details["model_path"] == str(model_dir)
+    assert details["runtime_model_path"] == str(runtime_dir)
+    assert details["tokenizer_artifacts"]["vocab.json"] is True
+    assert details["runtime_tokenizer_artifacts"]["vocab.json"] is True
+    assert details["runtime_tokenizer_artifacts"]["merges.txt"] is False

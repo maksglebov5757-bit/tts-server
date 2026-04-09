@@ -10,6 +10,14 @@ class GenerationCommand:
     text: str
     model: Optional[str] = None
     save_output: bool = False
+    language: str = "auto"
+    language: str = "auto"
+
+    def __post_init__(self) -> None:
+        normalized_language = self.language.strip().lower()
+        if not normalized_language:
+            raise ValueError("Language must not be empty")
+        object.__setattr__(self, "language", normalized_language)
 
 
 @dataclass(frozen=True)

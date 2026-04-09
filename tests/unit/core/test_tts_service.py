@@ -17,7 +17,9 @@ pytestmark = pytest.mark.unit
 
 class StubRegistry:
     def get_model(self, model_name=None, mode=None):
-        spec = next(spec for spec in MODEL_SPECS.values() if spec.mode == (mode or "clone"))
+        spec = next(
+            spec for spec in MODEL_SPECS.values() if spec.mode == (mode or "clone")
+        )
         return spec, object()
 
 
@@ -40,11 +42,13 @@ def _make_core_settings(tmp_path: Path) -> CoreSettings:
     return settings
 
 
-def test_synthesize_clone_passes_ref_audio_as_string(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_synthesize_clone_passes_ref_audio_as_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     settings = _make_core_settings(tmp_path)
     ref_audio_path = tmp_path / "reference.wav"
     ref_audio_path.write_bytes(make_wav_bytes())
-    service = TTSService(registry=StubRegistry(), settings=settings)
+    service = TTSService(registry=StubRegistry(), settings=settings)  # type: ignore[arg-type]
     captured_kwargs = {}
 
     def fake_generate_audio(**kwargs):
@@ -65,12 +69,43 @@ def test_synthesize_clone_passes_ref_audio_as_string(tmp_path: Path, monkeypatch
     assert result.mode == "clone"
     assert isinstance(captured_kwargs["ref_audio"], str)
     assert captured_kwargs["ref_audio"].endswith("reference.wav")
+    assert captured_kwargs["language"] == "auto"
 
 
-def test_tts_service_emits_structured_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+def test_synthesize_clone_passes_explicit_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    settings = _make_core_settings(tmp_path)
+    ref_audio_path = tmp_path / "reference.wav"
+    ref_audio_path.write_bytes(make_wav_bytes())
+    service = TTSService(registry=StubRegistry(), settings=settings)  # type: ignore[arg-type]
+    captured_kwargs = {}
+
+    def fake_generate_audio(**kwargs):
+        captured_kwargs.update(kwargs)
+        output_dir = Path(kwargs["output_path"])
+        (output_dir / "audio_0001.wav").write_bytes(make_wav_bytes())
+
+    monkeypatch.setattr("core.services.tts_service.generate_audio", fake_generate_audio)
+
+    service.synthesize_clone(
+        VoiceCloneCommand(
+            text="Clone this",
+            ref_audio_path=ref_audio_path,
+            ref_text="Clone this",
+            language="Ru ",
+        )
+    )
+
+    assert captured_kwargs["language"] == "ru"
+
+
+def test_tts_service_emits_structured_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
     settings = _make_core_settings(tmp_path)
     registry = LoggingRegistry()
-    service = TTSService(registry=registry, settings=settings)
+    service = TTSService(registry=registry, settings=settings)  # type: ignore[arg-type]
     ref_audio_path = tmp_path / "reference.wav"
     ref_audio_path.write_bytes(make_wav_bytes())
 
@@ -93,5 +128,15 @@ def test_tts_service_emits_structured_logs(tmp_path: Path, monkeypatch: pytest.M
     started_logs = extract_json_logs(caplog, "tts.clone.started")
     completed_logs = extract_json_logs(caplog, "tts.generation.completed")
     assert registry.calls == 1
-    assert any(item["mode"] == "clone" and item["text_length"] == len("Clone this") for item in started_logs)
-    assert any(item["mode"] == "clone" and item["model"] == result.model for item in completed_logs)
+    assert any(
+        item["mode"] == "clone"
+        and item["text_length"] == len("Clone this")
+        and item["language"] == "auto"
+        for item in started_logs
+    )
+    assert any(
+        item["mode"] == "clone"
+        and item["model"] == result.model
+        and item["language"] == "auto"
+        for item in completed_logs
+    )

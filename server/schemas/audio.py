@@ -13,12 +13,17 @@ def normalize_text_value(value: str, *, empty_message: str) -> str:
     return value
 
 
+def normalize_language_value(value: str) -> str:
+    value = value.strip().lower()
+    if not value:
+        raise ValueError("Language must not be empty")
+    return value
+
 
 def validate_text_length(value: str, *, field_name: str, max_chars: int) -> str:
     if len(value) > max_chars:
         raise ValueError(f"{field_name} must be at most {max_chars} characters")
     return value
-
 
 
 class OpenAISpeechRequest(BaseModel):
@@ -27,6 +32,7 @@ class OpenAISpeechRequest(BaseModel):
     model: str = Field(..., description="Model identifier")
     input: str = Field(..., min_length=1, description="Input text")
     voice: str = Field(default="Vivian", description="Speaker/voice name")
+    language: str = Field(default="auto", description="Language code or auto")
     response_format: Literal["wav", "pcm"] = Field(default="wav")
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
 
@@ -35,15 +41,23 @@ class OpenAISpeechRequest(BaseModel):
     def validate_input(cls, value: str) -> str:
         return normalize_text_value(value, empty_message="Input text must not be empty")
 
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str) -> str:
+        return normalize_language_value(value)
+
 
 class CustomTTSRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    model: Optional[str] = Field(default=None, description="Optional custom voice model override")
+    model: Optional[str] = Field(
+        default=None, description="Optional custom voice model override"
+    )
     text: str = Field(..., min_length=1)
     speaker: str = Field(default="Vivian")
     emotion: Optional[str] = Field(default=None)
     instruct: Optional[str] = Field(default=None)
+    language: str = Field(default="auto")
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     save_output: Optional[bool] = Field(default=None)
 
@@ -52,19 +66,32 @@ class CustomTTSRequest(BaseModel):
     def validate_text(cls, value: str) -> str:
         return normalize_text_value(value, empty_message="Text must not be empty")
 
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str) -> str:
+        return normalize_language_value(value)
+
 
 class DesignTTSRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    model: Optional[str] = Field(default=None, description="Optional voice design model override")
+    model: Optional[str] = Field(
+        default=None, description="Optional voice design model override"
+    )
     text: str = Field(..., min_length=1)
     voice_description: str = Field(..., min_length=1)
+    language: str = Field(default="auto")
     save_output: Optional[bool] = Field(default=None)
 
     @field_validator("text", "voice_description")
     @classmethod
     def validate_non_empty(cls, value: str) -> str:
         return normalize_text_value(value, empty_message="Value must not be empty")
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str) -> str:
+        return normalize_language_value(value)
 
 
 class JobFailurePayload(BaseModel):

@@ -89,6 +89,7 @@ class TTSBackend(ABC):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         speaker: str,
         instruct: str,
         speed: float,
@@ -102,6 +103,7 @@ class TTSBackend(ABC):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         voice_description: str,
     ) -> None:
         raise NotImplementedError
@@ -113,6 +115,7 @@ class TTSBackend(ABC):
         *,
         text: str,
         output_dir: Path,
+        language: str,
         ref_audio_path: Path,
         ref_text: str | None,
     ) -> None:

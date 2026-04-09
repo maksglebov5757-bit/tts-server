@@ -47,6 +47,7 @@ class TTSSynthesisResult:
     error_message: Optional[str] = None
     duration_ms: float = 0.0
     speaker: str = "unknown"
+    language: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class VoiceDesignSynthesisResult:
     error_message: Optional[str] = None
     duration_ms: float = 0.0
     voice_description: str = ""
+    language: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class VoiceCloneSynthesisResult:
     error_message: Optional[str] = None
     duration_ms: float = 0.0
     ref_text: str | None = None
+    language: str = "auto"
 
 
 class TTSSynthesizer:
@@ -105,6 +108,7 @@ class TTSSynthesizer:
         text: str,
         speaker: str | None = None,
         speed: float | None = None,
+        language: str = "auto",
         correlation: Optional[TelegramCorrelationContext] = None,
     ) -> TTSSynthesisResult:
         """
@@ -140,6 +144,7 @@ class TTSSynthesizer:
                 text_length=len(text),
                 speaker=effective_speaker,
                 speed=effective_speed,
+                language=language,
             )
 
             self._metrics.synthesis_started(effective_speaker)
@@ -151,6 +156,7 @@ class TTSSynthesizer:
                 text,
                 effective_speaker,
                 effective_speed,
+                language,
             )
 
             duration_ms = timer.elapsed_ms
@@ -166,6 +172,7 @@ class TTSSynthesizer:
                 audio_size_bytes=len(result.audio.bytes_data),
                 duration_ms=duration_ms,
                 backend=result.backend,
+                language=language,
             )
 
             self._metrics.synthesis_completed(effective_speaker, duration_ms)
@@ -175,6 +182,7 @@ class TTSSynthesizer:
                 audio_bytes=result.audio.bytes_data,
                 duration_ms=duration_ms,
                 speaker=effective_speaker,
+                language=language,
             )
 
         except CoreError as exc:
@@ -190,6 +198,7 @@ class TTSSynthesizer:
                 speed=effective_speed,
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed(effective_speaker, type(exc).__name__)
@@ -199,6 +208,7 @@ class TTSSynthesizer:
                 error_message=f"Synthesis error: {exc}",
                 duration_ms=duration_ms,
                 speaker=effective_speaker,
+                language=language,
             )
 
         except Exception as exc:
@@ -214,6 +224,7 @@ class TTSSynthesizer:
                 speed=effective_speed,
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed(effective_speaker, type(exc).__name__)
@@ -223,6 +234,7 @@ class TTSSynthesizer:
                 error_message="An unexpected error occurred during synthesis",
                 duration_ms=duration_ms,
                 speaker=effective_speaker,
+                language=language,
             )
 
         finally:
@@ -234,6 +246,7 @@ class TTSSynthesizer:
         text: str,
         speaker: str,
         speed: float,
+        language: str,
     ) -> GenerationResult:
         """
         Synchronous synthesis method that calls core application service.
@@ -248,6 +261,7 @@ class TTSSynthesizer:
             text=text,
             speaker=speaker,
             speed=speed,
+            language=language,
             save_output=False,
         )
         return self._app.synthesize_custom(command)
@@ -256,6 +270,7 @@ class TTSSynthesizer:
         self,
         voice_description: str,
         text: str,
+        language: str = "auto",
         correlation: Optional[TelegramCorrelationContext] = None,
     ) -> VoiceDesignSynthesisResult:
         """
@@ -287,6 +302,7 @@ class TTSSynthesizer:
                 message="Starting Voice Design synthesis",
                 text_length=len(text),
                 voice_description_length=len(voice_description),
+                language=language,
             )
 
             self._metrics.synthesis_started("design")
@@ -297,6 +313,7 @@ class TTSSynthesizer:
                 self._synthesize_design_sync,
                 voice_description,
                 text,
+                language,
             )
 
             duration_ms = timer.elapsed_ms
@@ -311,6 +328,7 @@ class TTSSynthesizer:
                 audio_size_bytes=len(result.audio.bytes_data),
                 duration_ms=duration_ms,
                 backend=result.backend,
+                language=language,
             )
 
             self._metrics.synthesis_completed("design", duration_ms)
@@ -320,6 +338,7 @@ class TTSSynthesizer:
                 audio_bytes=result.audio.bytes_data,
                 duration_ms=duration_ms,
                 voice_description=voice_description,
+                language=language,
             )
 
         except CoreError as exc:
@@ -334,6 +353,7 @@ class TTSSynthesizer:
                 voice_description_length=len(voice_description),
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed("design", type(exc).__name__)
@@ -343,6 +363,7 @@ class TTSSynthesizer:
                 error_message=f"Synthesis error: {exc}",
                 duration_ms=duration_ms,
                 voice_description=voice_description,
+                language=language,
             )
 
         except Exception as exc:
@@ -357,6 +378,7 @@ class TTSSynthesizer:
                 voice_description_length=len(voice_description),
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed("design", type(exc).__name__)
@@ -366,6 +388,7 @@ class TTSSynthesizer:
                 error_message="An unexpected error occurred during synthesis",
                 duration_ms=duration_ms,
                 voice_description=voice_description,
+                language=language,
             )
 
         finally:
@@ -376,6 +399,7 @@ class TTSSynthesizer:
         self,
         voice_description: str,
         text: str,
+        language: str,
     ) -> GenerationResult:
         """
         Synchronous synthesis method for voice design that calls core application service.
@@ -385,6 +409,7 @@ class TTSSynthesizer:
         command = VoiceDesignCommand(
             text=text,
             voice_description=voice_description,
+            language=language,
             save_output=False,
         )
         return self._app.synthesize_design(command)
@@ -394,6 +419,7 @@ class TTSSynthesizer:
         text: str,
         ref_audio_path: str,
         ref_text: str | None = None,
+        language: str = "auto",
         correlation: Optional[TelegramCorrelationContext] = None,
     ) -> VoiceCloneSynthesisResult:
         """
@@ -427,6 +453,7 @@ class TTSSynthesizer:
                 text_length=len(text),
                 ref_audio_path=ref_audio_path,
                 ref_text_provided=ref_text is not None,
+                language=language,
             )
 
             self._metrics.synthesis_started("clone")
@@ -438,6 +465,7 @@ class TTSSynthesizer:
                 ref_audio_path,
                 text,
                 ref_text,
+                language,
             )
 
             duration_ms = timer.elapsed_ms
@@ -451,6 +479,7 @@ class TTSSynthesizer:
                 audio_size_bytes=len(result.audio.bytes_data),
                 duration_ms=duration_ms,
                 backend=result.backend,
+                language=language,
             )
 
             self._metrics.synthesis_completed("clone", duration_ms)
@@ -460,6 +489,7 @@ class TTSSynthesizer:
                 audio_bytes=result.audio.bytes_data,
                 duration_ms=duration_ms,
                 ref_text=ref_text,
+                language=language,
             )
 
         except CoreError as exc:
@@ -473,6 +503,7 @@ class TTSSynthesizer:
                 text_length=len(text),
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed("clone", type(exc).__name__)
@@ -482,6 +513,7 @@ class TTSSynthesizer:
                 error_message=f"Synthesis error: {exc}",
                 duration_ms=duration_ms,
                 ref_text=ref_text,
+                language=language,
             )
 
         except Exception as exc:
@@ -495,6 +527,7 @@ class TTSSynthesizer:
                 text_length=len(text),
                 duration_ms=duration_ms,
                 error_type=type(exc).__name__,
+                language=language,
             )
 
             self._metrics.synthesis_failed("clone", type(exc).__name__)
@@ -504,6 +537,7 @@ class TTSSynthesizer:
                 error_message="An unexpected error occurred during synthesis",
                 duration_ms=duration_ms,
                 ref_text=ref_text,
+                language=language,
             )
 
         finally:
@@ -515,6 +549,7 @@ class TTSSynthesizer:
         ref_audio_path: str,
         text: str,
         ref_text: str | None,
+        language: str,
     ) -> GenerationResult:
         """
         Synchronous synthesis method for voice cloning that calls core application service.
@@ -527,6 +562,7 @@ class TTSSynthesizer:
             text=text,
             ref_audio_path=PathLib(ref_audio_path),
             ref_text=ref_text,
+            language=language,
             save_output=False,
         )
         return self._app.synthesize_clone(command)
