@@ -1,3 +1,24 @@
+# FILE: cli/runtime.py
+# VERSION: 1.0.0
+# START_MODULE_CONTRACT
+#   PURPOSE: Define CLI runtime container with core runtime and CLI-specific state.
+#   SCOPE: CLIRuntime dataclass
+#   DEPENDS: M-BOOTSTRAP
+#   LINKS: M-CLI
+#   ROLE: RUNTIME
+#   MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+#
+# START_MODULE_MAP
+#   CLI_MODELS - Mapping of CLI model keys to model specifications
+#   CliRuntime - Interactive CLI runtime container
+#   run_cli - Launch the interactive CLI workflow loop
+# END_MODULE_MAP
+#
+# START_CHANGE_SUMMARY
+#   LAST_CHANGE: [v1.0.0 - GRACE integration: added MODULE_CONTRACT, MODULE_MAP, and function contracts]
+# END_CHANGE_SUMMARY
+
 from __future__ import annotations
 
 import gc
@@ -28,6 +49,13 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 CLI_MODELS = {spec.key: spec for spec in MODEL_SPECS.values()}
 
 
+# START_CONTRACT: CliRuntime
+#   PURPOSE: Drive the interactive CLI experience for TTS, voice design, and voice cloning workflows.
+#   INPUTS: { settings: Optional[CliSettings] - optional CLI configuration override }
+#   OUTPUTS: { CliRuntime - interactive runtime with loaded services and registries }
+#   SIDE_EFFECTS: Builds the shared CLI runtime and retains mutable session state.
+#   LINKS: M-CLI
+# END_CONTRACT: CliRuntime
 class CliRuntime:
     def __init__(self, settings: Optional[CliSettings] = None):
         runtime = build_cli_runtime(settings)
@@ -36,6 +64,13 @@ class CliRuntime:
         self.service = runtime.core.application
         self.backend_registry = runtime.core.backend_registry
 
+    # START_CONTRACT: flush_input
+    #   PURPOSE: Clear pending terminal input to avoid accidental buffered responses.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Flushes stdin when terminal controls are available.
+    #   LINKS: M-CLI
+    # END_CONTRACT: flush_input
     def flush_input(self) -> None:
         try:
             import termios
@@ -44,9 +79,23 @@ class CliRuntime:
         except (ImportError, OSError):
             pass
 
+    # START_CONTRACT: clean_memory
+    #   PURPOSE: Trigger garbage collection after a CLI workflow completes.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Invokes Python garbage collection.
+    #   LINKS: M-CLI
+    # END_CONTRACT: clean_memory
     def clean_memory(self) -> None:
         gc.collect()
 
+    # START_CONTRACT: clean_path
+    #   PURPOSE: Normalize user-supplied file paths captured from terminal input.
+    #   INPUTS: { user_input: str - raw CLI path input }
+    #   OUTPUTS: { str - cleaned filesystem path string }
+    #   SIDE_EFFECTS: none
+    #   LINKS: M-CLI
+    # END_CONTRACT: clean_path
     @staticmethod
     def clean_path(user_input: str) -> str:
         path = user_input.strip()
@@ -54,6 +103,13 @@ class CliRuntime:
             path = path[1:-1]
         return path.replace("\\ ", " ")
 
+    # START_CONTRACT: maybe_play_audio
+    #   PURPOSE: Play a generated audio file automatically when CLI autoplay is enabled.
+    #   INPUTS: { path: Path - saved audio output path }
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Launches an OS audio playback command.
+    #   LINKS: M-CLI
+    # END_CONTRACT: maybe_play_audio
     def maybe_play_audio(self, path: Path) -> None:
         if not self.settings.auto_play_cli:
             return
@@ -80,6 +136,13 @@ class CliRuntime:
             except FileNotFoundError:
                 continue
 
+    # START_CONTRACT: display_saved_output
+    #   PURPOSE: Print saved output information and optionally play the generated audio.
+    #   INPUTS: { saved_path: Optional[Path] - persisted audio output path, backend: Optional[str] - backend label for display }
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Writes status text to stdout and may trigger audio playback.
+    #   LINKS: M-CLI
+    # END_CONTRACT: display_saved_output
     def display_saved_output(
         self, saved_path: Optional[Path], backend: Optional[str] = None
     ) -> None:
@@ -95,12 +158,26 @@ class CliRuntime:
             print(f"Saved: {relative_path}")
         self.maybe_play_audio(saved_path)
 
+    # START_CONTRACT: print_runtime_banner
+    #   PURPOSE: Show the active backend and selection rationale for the CLI session.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Writes runtime banner text to stdout.
+    #   LINKS: M-CLI
+    # END_CONTRACT: print_runtime_banner
     def print_runtime_banner(self) -> None:
         selection = self.backend_registry.selection
         backend = self.registry.backend
         print(f"Backend: {backend.label} [{backend.key}]")
         print(f"Selection: {selection.selection_reason}")
 
+    # START_CONTRACT: get_safe_input
+    #   PURPOSE: Read interactive text input or load text content from a dragged file.
+    #   INPUTS: { prompt: str - prompt shown to the CLI user }
+    #   OUTPUTS: { Optional[str] - input text or None when the user exits }
+    #   SIDE_EFFECTS: Reads stdin and may read text content from disk.
+    #   LINKS: M-CLI
+    # END_CONTRACT: get_safe_input
     def get_safe_input(
         self, prompt: str = "\nEnter text (or drag .txt file): "
     ) -> Optional[str]:
@@ -124,12 +201,26 @@ class CliRuntime:
             self.flush_input()
             return None
 
+    # START_CONTRACT: get_saved_voices
+    #   PURPOSE: List saved cloned voice profiles available to the CLI.
+    #   INPUTS: {}
+    #   OUTPUTS: { list[str] - sorted saved voice names }
+    #   SIDE_EFFECTS: Reads the configured voices directory.
+    #   LINKS: M-CLI
+    # END_CONTRACT: get_saved_voices
     def get_saved_voices(self) -> list[str]:
         if not self.settings.voices_dir.exists():
             return []
         voices = [path.stem for path in self.settings.voices_dir.glob("*.wav")]
         return sorted(voices)
 
+    # START_CONTRACT: enroll_new_voice
+    #   PURPOSE: Register a new saved voice profile from a user-provided reference recording.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Prompts the user, normalizes audio, and writes voice assets to disk.
+    #   LINKS: M-CLI
+    # END_CONTRACT: enroll_new_voice
     def enroll_new_voice(self) -> None:
         print("\n--- Enroll New Voice ---")
         self.flush_input()
@@ -171,6 +262,13 @@ class CliRuntime:
 
         print(f"Voice saved as '{safe_name}'")
 
+    # START_CONTRACT: run_custom_session
+    #   PURPOSE: Run the interactive custom-voice synthesis flow for the selected model.
+    #   INPUTS: { model_key: str - CLI model selection key }
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Prompts the user, submits synthesis requests, and may save or play audio.
+    #   LINKS: M-CLI
+    # END_CONTRACT: run_custom_session
     def run_custom_session(self, model_key: str) -> None:
         spec = CLI_MODELS[model_key]
         if self.registry.resolve_model_path(spec.folder) is None:
@@ -227,6 +325,13 @@ class CliRuntime:
                 print(f"Error: {exc}")
         self.clean_memory()
 
+    # START_CONTRACT: run_design_session
+    #   PURPOSE: Run the interactive voice-design synthesis flow for the selected model.
+    #   INPUTS: { model_key: str - CLI model selection key }
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Prompts the user, submits synthesis requests, and may save or play audio.
+    #   LINKS: M-CLI
+    # END_CONTRACT: run_design_session
     def run_design_session(self, model_key: str) -> None:
         spec = CLI_MODELS[model_key]
         if self.registry.resolve_model_path(spec.folder) is None:
@@ -260,6 +365,13 @@ class CliRuntime:
                 print(f"Error: {exc}")
         self.clean_memory()
 
+    # START_CONTRACT: run_clone_manager
+    #   PURPOSE: Run the interactive voice-cloning workflow, including saved voices and quick clone mode.
+    #   INPUTS: { model_key: str - CLI model selection key }
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Prompts the user, reads or writes voice assets, and may save or play audio.
+    #   LINKS: M-CLI
+    # END_CONTRACT: run_clone_manager
     def run_clone_manager(self, model_key: str) -> None:
         print("\n--- Voice Cloning Manager ---")
         print("  1. Pick from Saved Voices")
@@ -345,6 +457,13 @@ class CliRuntime:
             ref_audio.unlink(missing_ok=True)
         self.clean_memory()
 
+    # START_CONTRACT: main_menu
+    #   PURPOSE: Present the top-level CLI menu and dispatch the chosen workflow.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Writes menu text to stdout and reads user input.
+    #   LINKS: M-CLI
+    # END_CONTRACT: main_menu
     def main_menu(self) -> None:
         print("\n" + "=" * 40)
         print(" Qwen3-TTS Manager")
@@ -382,6 +501,13 @@ class CliRuntime:
         elif mode == "clone":
             self.run_clone_manager(choice)
 
+    # START_CONTRACT: run
+    #   PURPOSE: Start the CLI session and keep serving the main menu until exit.
+    #   INPUTS: {}
+    #   OUTPUTS: { None - no return value }
+    #   SIDE_EFFECTS: Ensures directories exist, writes to stdout, and reads interactive input.
+    #   LINKS: M-CLI
+    # END_CONTRACT: run
     def run(self) -> None:
         self.settings.ensure_directories()
         self.print_runtime_banner()
@@ -389,8 +515,21 @@ class CliRuntime:
             self.main_menu()
 
 
+# START_CONTRACT: run_cli
+#   PURPOSE: Launch the interactive CLI runtime with keyboard interrupt handling.
+#   INPUTS: {}
+#   OUTPUTS: { None - no return value }
+#   SIDE_EFFECTS: Starts an interactive terminal session and writes to stdout.
+#   LINKS: M-CLI
+# END_CONTRACT: run_cli
 def run_cli() -> None:
     try:
         CliRuntime().run()
     except KeyboardInterrupt:
         print("\nExiting...")
+
+__all__ = [
+    "CLI_MODELS",
+    "CliRuntime",
+    "run_cli",
+]
