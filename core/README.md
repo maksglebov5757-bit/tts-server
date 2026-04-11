@@ -18,7 +18,7 @@ Transport adapters should depend on [core/](core/) instead of duplicating synthe
 ## High-level structure
 
 - [core/application/](application/) — application services and job orchestration contracts
-- [core/backends/](backends/) — MLX and Torch backends
+- [core/backends/](backends/) — MLX, accelerated Qwen fast, Torch, and ONNX/Piper backends
 - [core/contracts/](contracts/) — DTOs, commands, and job/result contracts
 - [core/infrastructure/](infrastructure/) — local implementations for storage, execution, and I/O
 - [core/models/](models/) — model metadata and manifest files
@@ -57,9 +57,19 @@ The resulting runtime exposes the shared services consumed by transport adapters
 
 ### Backend layer
 
-- [`MLXBackend`](backends/mlx_backend.py:20) — Apple Silicon focused backend
-- [`TorchBackend`](backends/torch_backend.py:15) — PyTorch backend for CPU/CUDA-compatible setups
+- [`MLXBackend`](backends/mlx_backend.py:20) — Apple Silicon focused Qwen backend
+- [`QwenFastBackend`](backends/qwen_fast_backend.py) — optional accelerated Qwen custom-only backend with explicit CUDA/runtime gating
+- [`TorchBackend`](backends/torch_backend.py:15) — PyTorch backend for CPU/CUDA-compatible Qwen setups
+- [`ONNXBackend`](backends/onnx_backend.py) — Piper backend for local ONNX voice inference
 - [`BackendRegistry`](backends/registry.py:14) — backend registration and selection
+
+### Family and planning layer
+
+- [`SynthesisCoordinator`](services/tts_service.py) — internal coordinator over planning, family preparation, and runtime execution
+- [`SynthesisPlanner`](planning/planner.py) — normalized request planning bridge
+- [`Qwen3FamilyAdapter`](model_families/qwen3.py) — current Qwen3 family semantics
+- [`PiperFamilyAdapter`](model_families/piper.py) — Piper family semantics for local ONNX voices
+- [`HostProbe`](planning/host_probe.py) and [`CapabilityResolver`](planning/capability_resolver.py) — explainable backend selection surfaces
 
 ### Infrastructure layer
 
@@ -79,6 +89,7 @@ Common environment variables:
 - `QWEN_TTS_UPLOAD_STAGING_DIR`
 - `QWEN_TTS_BACKEND`
 - `QWEN_TTS_BACKEND_AUTOSELECT`
+- `QWEN_TTS_QWEN_FAST_ENABLED`
 - `QWEN_TTS_MODEL_PRELOAD_POLICY`
 - `QWEN_TTS_MODEL_PRELOAD_IDS`
 - `QWEN_TTS_AUTH_MODE`
@@ -89,13 +100,28 @@ Common environment variables:
 
 Transport-specific settings are documented in [../server/README.md](../server/README.md), [../telegram_bot/README.md](../telegram_bot/README.md), and [../cli/README.md](../cli/README.md).
 
+## Runtime readiness and self-checks
+
+- [`ModelRegistry.readiness_report()`](services/model_registry.py:218) now exposes selected backend, per-model execution backend, mixed-backend routing summary, host snapshot, family summary, and per-candidate route diagnostics for optional fast-lane decisions.
+- The operator utility [`scripts/runtime_self_check.py`](../scripts/runtime_self_check.py) prints a JSON snapshot suitable for local setup validation and CI evidence collection.
+- Model discovery payloads intentionally expose `selected_backend` and `execution_backend` separately because mixed-family deployments may route Piper to ONNX while the runtime still selects MLX globally, and Qwen custom models may advertise `qwen_fast` as a rejected or selected route candidate without changing non-custom modes.
+
 ## Model assets
 
 The manifest lives in [models/manifest.v1.json](models/manifest.v1.json). Local model directories are resolved through [`ModelRegistry`](services/model_registry.py:20) relative to `QWEN_TTS_MODELS_DIR`.
 
+The runtime currently supports two model families:
+
+- `Qwen3-TTS` via `mlx` and `torch`
+- `Qwen3-TTS` custom-only accelerated lane via `qwen_fast` with safe fallback to `torch`
+- `Piper` via `onnx`
+
+The `qwen_fast` lane depends on the optional faster-qwen3-tts runtime, whose pinned upstream README documents `pip install faster-qwen3-tts` together with Python 3.10+, PyTorch 2.5.1+, and NVIDIA CUDA prerequisites.
+
 ## Operational notes
 
-- Backend autoselection prefers MLX and then Torch when enabled.
+- Backend autoselection is now host-aware and explainable; MLX is preferred on compatible macOS hosts, Torch is preferred on Linux/Windows CPU/CUDA hosts, and ONNX can be selected for Piper voices.
+- Unsupported family operations now fail intentionally with explicit capability errors instead of falling through into ambiguous runtime failures.
 - Local job execution is repository-local and intended for a single-node runtime.
 - Temporary clone uploads use `QWEN_TTS_UPLOAD_STAGING_DIR`; adapters should not write temporary clone files into [../.outputs](../.outputs).
 - All transport adapters reuse the same core request and error model.

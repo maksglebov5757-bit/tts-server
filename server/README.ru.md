@@ -57,6 +57,8 @@ docker compose -f docker-compose.server.yaml up --build
 
 - `GET /api/v1/models`
 
+Model discovery теперь отдаёт family metadata, supported capabilities, selected backend, per-model execution backend, missing artifacts и route explanations для mixed-family deployment. Для Qwen custom models здесь также может появляться optional route candidate `qwen_fast`, который в текущем MVP остаётся **custom-only** и уходит в fallback на `torch`, если fast-path prerequisites не выполнены.
+
 ### Синхронные TTS endpoint'ы
 
 - `POST /v1/audio/speech`
@@ -83,6 +85,9 @@ Async submit endpoint'ы принимают заголовок `Idempotency-Key`
 - Clone uploads временно размещаются в `QWEN_TTS_UPLOAD_STAGING_DIR` и удаляются после обработки запроса.
 - Слишком длинные текстовые запросы завершаются стандартной validation error.
 - При превышении таймаута inference возвращается `request_timeout` с HTTP `504`.
+- Unsupported model/family combinations теперь возвращают controlled error `model_capability_not_supported` с явными capability details.
+- `GET /health/ready` теперь включает host snapshot и mixed-backend routing summary, чтобы оператор видел, почему Piper может маршрутизироваться в ONNX даже при глобально выбранном MLX.
+- Ускоренный `qwen_fast` lane остаётся additive и optional; readiness/model payload'ы могут показывать его как отклонённого route candidate с явной причиной fallback, даже если фактический execution backend остаётся `mlx` или `torch`.
 
 ## Конфигурация
 
@@ -101,6 +106,10 @@ Server-specific настройки расширяют [`CoreSettings`](../core/c
 - `QWEN_TTS_INFERENCE_BUSY_STATUS_CODE`
 
 Также применяются общие переменные из [../core/README.ru.md](../core/README.ru.md).
+
+Если нужно полностью отключить ускоренный Qwen lane, установите `QWEN_TTS_QWEN_FAST_ENABLED=false`. Это влияет только на optional custom-only fast lane и не отключает стандартный Torch Qwen path.
+
+Если lane нужно включить на поддерживаемом Linux/Windows CUDA-хосте, установите optional accelerated runtime отдельно через `pip install faster-qwen3-tts` и соблюдайте upstream prerequisites (Python 3.10+, PyTorch 2.5.1+, NVIDIA GPU с CUDA).
 
 ## Связанные исходники
 

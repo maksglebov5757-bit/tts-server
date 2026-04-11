@@ -4,7 +4,7 @@
 
 ## Purpose
 
-[cli/](./) is the local interactive adapter for working with Qwen3 TTS from a terminal. It reuses the shared runtime from [../core/README.md](../core/README.md) and does not introduce a separate network service.
+[cli/](./) is the local interactive adapter for working with the shared multi-family TTS runtime from a terminal. It reuses the shared runtime from [../core/README.md](../core/README.md) and does not introduce a separate network service.
 
 Use it when you want to:
 
@@ -84,6 +84,7 @@ Useful variables include:
 - `QWEN_TTS_UPLOAD_STAGING_DIR`
 - `QWEN_TTS_BACKEND`
 - `QWEN_TTS_BACKEND_AUTOSELECT`
+- `QWEN_TTS_QWEN_FAST_ENABLED`
 - `QWEN_TTS_AUTO_PLAY_CLI`
 
 ## Operational notes
@@ -92,6 +93,8 @@ Useful variables include:
 - It does not use Docker-specific entrypoints or compose files.
 - Audio playback depends on OS tools invoked by [`maybe_play_audio()`](runtime.py:53).
 - Because the interface is interactive, it is best suited for manual testing rather than automation.
+- If the shared runtime selects `qwen_fast`, that accelerated lane applies only to Qwen custom synthesis and still falls back safely to `torch` when unavailable.
+- The current menu remains Qwen-oriented for custom/design/clone workflows; Piper support is visible through shared runtime metadata and HTTP health/model surfaces, but the interactive CLI does not yet provide a dedicated Piper-first menu.
 
 ## Related docs
 

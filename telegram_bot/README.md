@@ -73,6 +73,8 @@ Container image build and bot process startup were verified, but full external i
 | `/design` | Synthesize using a natural-language voice description and optional language |
 | `/clone` | Clone a voice from replied reference audio with optional language |
 
+The bot command surface still targets Qwen-oriented `/tts`, `/design`, and `/clone` workflows. Families that do not support design or clone operations should be surfaced through controlled capability errors rather than ambiguous runtime failures.
+
 ### `/tts` syntax
 
 ```text

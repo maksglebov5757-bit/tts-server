@@ -73,6 +73,8 @@ docker compose -f docker-compose.telegram-bot.yaml up --build
 | `/design` | Синтезировать речь по текстовому описанию голоса |
 | `/clone` | Клонировать голос по reference audio из replied сообщения |
 
+Текущий command surface бота остаётся Qwen-oriented для сценариев `/tts`, `/design` и `/clone`. Если выбранная family не поддерживает design или clone, runtime должен возвращать controlled capability errors, а не неоднозначные runtime failure.
+
 ### Синтаксис `/tts`
 
 ```text

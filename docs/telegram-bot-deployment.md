@@ -17,8 +17,13 @@ This document describes deployment options for the Telegram bot service.
    ```
 
 2. **Python dependencies**: Ensure requirements are installed:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+   For CI-style repository verification without heavyweight optional runtime packages, use:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-ci.txt
    ```
 
 ## Environment Variables

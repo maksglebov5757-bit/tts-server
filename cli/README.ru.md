@@ -4,7 +4,7 @@ English version: [README.md](README.md)
 
 ## Назначение
 
-[cli/](./) — локальный интерактивный адаптер для работы с Qwen3 TTS из терминала. Он использует общий runtime из [../core/README.ru.md](../core/README.ru.md) и не поднимает отдельный сетевой сервис.
+[cli/](./) — локальный интерактивный адаптер для работы с общим multi-family TTS runtime из терминала. Он использует общий runtime из [../core/README.ru.md](../core/README.ru.md) и не поднимает отдельный сетевой сервис.
 
 CLI удобен, когда нужно:
 
@@ -83,6 +83,7 @@ CLI использует ту же схему хранения, что и ост
 - `QWEN_TTS_UPLOAD_STAGING_DIR`
 - `QWEN_TTS_BACKEND`
 - `QWEN_TTS_BACKEND_AUTOSELECT`
+- `QWEN_TTS_QWEN_FAST_ENABLED`
 - `QWEN_TTS_AUTO_PLAY_CLI`
 
 ## Эксплуатационные замечания
@@ -91,6 +92,8 @@ CLI использует ту же схему хранения, что и ост
 - Для него не предусмотрены отдельные Docker entrypoint'ы и compose-файлы.
 - Воспроизведение аудио зависит от системных инструментов, которые вызывает [`maybe_play_audio()`](runtime.py:53).
 - Из-за интерактивного интерфейса CLI лучше подходит для ручной проверки, а не для автоматизации.
+- Если shared runtime выбирает `qwen_fast`, этот ускоренный lane применяется только к Qwen custom synthesis и при недоступности безопасно уходит в fallback на `torch`.
+- Текущее меню всё ещё остаётся Qwen-oriented для сценариев custom/design/clone; Piper уже виден через shared runtime metadata и HTTP health/model surfaces, но отдельного Piper-first menu в CLI пока нет.
 
 ## Связанные документы
 

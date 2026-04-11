@@ -1,10 +1,10 @@
-# Qwen3 TTS on Apple Silicon
+# Modular Local TTS Runtime
 
 Русская версия: [README.ru.md](README.ru.md)
 
 ## Overview
 
-This repository provides a local text-to-speech stack built around Qwen3 TTS models and split into three transport adapters:
+This repository provides a local text-to-speech stack with a shared modular runtime and split into three transport adapters:
 
 - [server/](server/README.md) — FastAPI HTTP API
 - [telegram_bot/](telegram_bot/README.md) — Telegram bot based on long polling
@@ -23,6 +23,7 @@ Legacy root-level Docker assets such as the removed `Dockerfile` and `compose.ya
 ## Features
 
 - Local Qwen3 TTS inference with shared runtime from [core/](core/README.md)
+- Local Piper voice inference through ONNX runtime using the supported `piper-tts` Python API
 - OpenAI-style speech endpoint `POST /v1/audio/speech`
 - Extended HTTP endpoints for custom voice, voice design, and voice cloning
 - Telegram bot commands `/start`, `/help`, `/tts`, `/design`, `/clone`
@@ -37,10 +38,15 @@ Legacy root-level Docker assets such as the removed `Dockerfile` and `compose.ya
 - Python 3.11+
 - `ffmpeg` available in `PATH`
 - Local model directories available in [`.models/`](.models)
-- On macOS Apple Silicon: MLX-compatible environment and MLX-ready model artifacts
-- On Linux or Windows: environment compatible with PyTorch/Transformers
+- On macOS Apple Silicon: MLX-compatible environment and MLX-ready Qwen artifacts, or ONNX-compatible environment for Piper voices
+- On Linux or Windows: environment compatible with PyTorch/Transformers for Qwen, or ONNX runtime for Piper voices
 
 ## Installation
+
+### Dependency sets
+
+- `requirements.txt` — full local operator dependencies, including optional backend runtimes used by supported deployment lanes
+- `requirements-ci.txt` — lighter CI/test dependency set for repository verification without heavyweight optional runtimes
 
 ### macOS Apple Silicon
 
@@ -61,6 +67,26 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+### Optional Qwen Torch lane note
+
+The non-macOS Qwen lane depends on the official `qwen-tts` Python package used by [`TorchBackend`](core/backends/torch_backend.py). The upstream Qwen3-TTS repository documents `pip install -U qwen-tts` as the standard installation path and exposes `from qwen_tts import Qwen3TTSModel` after installation. Linux/Windows Qwen support therefore has an authoritative package path, but should still be treated as partially proven or best effort here until the full Torch lane is empirically validated on those hosts.
+
+### Optional accelerated Qwen lane note
+
+The repository also includes an additive `qwen_fast` backend for **custom-only** Qwen synthesis. This lane is optional, remains separate from the standard `torch` backend key, and falls back to the standard Torch Qwen path when its runtime prerequisites are not satisfied.
+
+The pinned faster-qwen3-tts README documents the accelerated install path as:
+
+```bash
+pip install faster-qwen3-tts
+```
+
+That same upstream README documents the fast-lane prerequisites as Python 3.10+, PyTorch 2.5.1+, and an NVIDIA GPU with CUDA. In this repository, treat that install path as an operator-managed optional dependency for supported Linux/Windows CUDA hosts rather than as a universal dependency for every environment.
+
+### Piper-specific note
+
+The repository now includes a supported Piper lane through `piper-tts` + `onnxruntime`. On macOS the `piper-tts` wheel bundles the required `espeakbridge` runtime and `espeak-ng-data`; on other platforms you should still verify local phonemization/runtime compatibility in your deployment environment.
+
 ## Models
 
 Place downloaded model directories in [`.models/`](.models). The supported local model IDs are registered by [`ModelRegistry`](core/services/model_registry.py:20) and described in [core/models/manifest.v1.json](core/models/manifest.v1.json).
@@ -73,6 +99,66 @@ Typical directories include:
 - `Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit`
 - `Qwen3-TTS-12Hz-0.6B-VoiceDesign-8bit`
 - `Qwen3-TTS-12Hz-0.6B-Base-8bit`
+- `Piper-en_US-lessac-medium`
+
+### Piper voice layout
+
+For the built-in Piper lane, place each Piper voice in its own directory under `.models/`, for example:
+
+- `.models/Piper-en_US-lessac-medium/model.onnx`
+- `.models/Piper-en_US-lessac-medium/model.onnx.json`
+
+You can download a Piper voice with the bundled downloader, for example:
+
+```bash
+source .venv311/bin/activate
+mkdir -p .models/Piper-en_US-lessac-medium
+.venv311/bin/python -m piper.download_voices en_US-lessac-medium --download-dir .models/Piper-en_US-lessac-medium
+mv .models/Piper-en_US-lessac-medium/en_US-lessac-medium.onnx .models/Piper-en_US-lessac-medium/model.onnx
+mv .models/Piper-en_US-lessac-medium/en_US-lessac-medium.onnx.json .models/Piper-en_US-lessac-medium/model.onnx.json
+```
+
+## Runtime self-check
+
+Use the built-in self-check utility to inspect selected backend, per-model execution backend, missing artifacts, and host/runtime signals:
+
+```bash
+source .venv311/bin/activate
+python scripts/runtime_self_check.py
+```
+
+Use strict mode in automation when you want a non-zero exit code for degraded runtime or missing assets:
+
+```bash
+python scripts/runtime_self_check.py --strict
+```
+
+When `qwen_fast` is enabled or considered, the self-check output also exposes `backend_support`, route candidates, and explicit fallback reasons so operators can see when the accelerated custom-only lane was selected, bypassed, or rejected.
+
+For repeatable validation flows, use the automation entry point instead of assembling commands manually:
+
+```bash
+python scripts/validate_runtime.py host-matrix
+python scripts/validate_runtime.py smoke-server
+python scripts/validate_runtime.py telegram-live --bot-token "$QWEN_TTS_TELEGRAM_BOT_TOKEN"
+python scripts/validate_runtime.py telegram-live --bot-token "$QWEN_TTS_TELEGRAM_BOT_TOKEN" --chat-id "$QWEN_TTS_TELEGRAM_VALIDATION_CHAT_ID" --expect-update-chat-id "$QWEN_TTS_TELEGRAM_VALIDATION_CHAT_ID" --expect-update-text "Qwen3-TTS validation ping."
+```
+
+- `host-matrix` validates the current host snapshot plus simulated `qwen_fast` optional-lane evidence.
+- `smoke-server` starts a local HTTP server, waits for health probes, runs the smoke suite, and stops the server automatically.
+- `telegram-live` verifies real Telegram Bot API reachability and can optionally send a validation message when you also pass `--chat-id`.
+- Add `--expect-update-chat-id` and optionally `--expect-update-text` when you want an opt-in dedicated-chat check that also confirms a newer matching inbound update is visible through `getUpdates` without launching the long-polling bot runtime.
+
+## Optional GRACE CLI install
+
+This repository can be linted locally with the optional `grace` CLI. The public GRACE packaging repository documents a Bun-based install path:
+
+```bash
+bun add -g @osovv/grace-cli
+grace lint --path /path/to/grace-project
+```
+
+CI in this repository still treats `grace` as optional because we do not require Bun on every validation host.
 
 ## Running the CLI
 
@@ -143,6 +229,15 @@ Shared settings are parsed by [`CoreSettings.from_env()`](core/config.py:112). C
 - `QWEN_TTS_BACKEND_AUTOSELECT`
 - `QWEN_TTS_SAMPLE_RATE`
 - `QWEN_TTS_MAX_INPUT_TEXT_CHARS`
+
+Supported backend keys now include:
+
+- `mlx` — Qwen3 on Apple Silicon
+- `qwen_fast` — optional accelerated Qwen custom-only lane with safe fallback to `torch`
+- `torch` — Qwen3 on Torch CPU/CUDA-compatible runtimes
+- `onnx` — Piper local voice inference through ONNX runtime
+
+Read the release-facing support matrix in [docs/support-matrix.md](docs/support-matrix.md) before making platform support claims.
 
 Server-specific settings are documented in [server/README.md](server/README.md), and Telegram-specific settings are documented in [telegram_bot/README.md](telegram_bot/README.md).
 

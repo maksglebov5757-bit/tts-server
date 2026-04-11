@@ -57,6 +57,8 @@ The image exposes port `8000` and uses `python -m uvicorn server:app --host 0.0.
 
 - `GET /api/v1/models`
 
+Model discovery now exposes family metadata, supported capabilities, selected backend, per-model execution backend, missing artifacts, and route explanations for mixed-family deployments. For Qwen custom models this may include the optional `qwen_fast` route candidate, which is **custom-only** in the current MVP and falls back to `torch` when its fast-path prerequisites are not satisfied.
+
 ### Synchronous TTS endpoints
 
 - `POST /v1/audio/speech`
@@ -86,6 +88,9 @@ Async submission endpoints accept the `Idempotency-Key` header.
 - Clone uploads are staged in `QWEN_TTS_UPLOAD_STAGING_DIR` and cleaned up after request processing.
 - Oversized text requests fail with the standard validation error.
 - Inference timeouts return `request_timeout` with HTTP `504`.
+- Unsupported model/family combinations now return controlled `model_capability_not_supported` errors with explicit capability metadata.
+- `GET /health/ready` now includes host snapshot and mixed-backend routing summaries so operators can see why a Piper model may route to ONNX while MLX remains globally selected.
+- The accelerated `qwen_fast` lane is additive and optional; readiness and model payloads may show it as a rejected route candidate with an explicit fallback reason even when the active execution backend remains `mlx` or `torch`.
 
 ## Configuration
 
@@ -104,6 +109,10 @@ Important variables:
 - `QWEN_TTS_INFERENCE_BUSY_STATUS_CODE`
 
 Shared variables from [../core/README.md](../core/README.md) also apply.
+
+If you want to disable the accelerated Qwen lane entirely, set `QWEN_TTS_QWEN_FAST_ENABLED=false`. This affects only the optional custom-only fast lane and does not disable the standard Torch Qwen path.
+
+When enabling this lane on a supported Linux/Windows CUDA host, install the optional accelerated runtime separately with `pip install faster-qwen3-tts` and follow the upstream prerequisites (Python 3.10+, PyTorch 2.5.1+, NVIDIA GPU with CUDA).
 
 ## Related source files
 
