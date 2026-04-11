@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-macos:
+    name: macOS release-hardening checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies
+        run: brew install ffmpeg
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+      - name: Run GRACE lint when available
+        run: |
+          if command -v grace >/dev/null 2>&1; then
+            grace lint --path "$GITHUB_WORKSPACE"
+          else
+            echo "grace CLI is not available in CI image; skipping optional GRACE lint step"
+          fi
+      - name: Run runtime self-check
+        run: python scripts/runtime_self_check.py
+      - name: Run host matrix validation
+        run: python scripts/validate_runtime.py host-matrix
+      - name: Run unit and integration tests
+        run: python -m pytest -m "unit or integration"
+
+  test-linux:
+    name: Linux release-hardening checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+      - name: Run GRACE lint when available
+        run: |
+          if command -v grace >/dev/null 2>&1; then
+            grace lint --path "$GITHUB_WORKSPACE"
+          else
+            echo "grace CLI is not available in CI image; skipping optional GRACE lint step"
+          fi
+      - name: Run runtime self-check
+        run: python scripts/runtime_self_check.py
+      - name: Run host matrix validation
+        run: python scripts/validate_runtime.py host-matrix
+      - name: Run unit and integration tests
+        run: python -m pytest -m "unit or integration"
+
+  test-windows-best-effort:
+    name: Windows best-effort validation
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+      - name: Run runtime self-check (best effort)
+        shell: pwsh
+        run: python scripts/runtime_self_check.py
+      - name: Run host matrix validation (best effort)
+        shell: pwsh
+        run: python scripts/validate_runtime.py host-matrix
+      - name: Run unit tests (best effort)
+        shell: pwsh
+        run: python -m pytest -m unit

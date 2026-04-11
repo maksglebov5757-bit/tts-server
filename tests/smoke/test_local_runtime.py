@@ -48,6 +48,7 @@ SMOKE_BASE_URL = os.getenv("QWEN_TTS_SMOKE_BASE_URL", "http://127.0.0.1:8001").r
 )
 MODELS_DIR = Path(os.getenv("QWEN_TTS_MODELS_DIR", ".models"))
 CUSTOM_MODEL_DIR = MODELS_DIR / "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+PIPER_MODEL_DIR = MODELS_DIR / "Piper-en_US-lessac-medium"
 EXPECTED_BACKEND = os.getenv("QWEN_TTS_SMOKE_EXPECTED_BACKEND")
 ASYNC_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timeout"}
 ASYNC_POLL_ATTEMPTS = int(os.getenv("QWEN_TTS_SMOKE_ASYNC_POLL_ATTEMPTS", "60"))
@@ -264,3 +265,16 @@ def test_async_custom_job_flow_smoke():
     )
     assert result_response["headers"].get("x-job-id") == job_id
     assert result_response["headers"].get("x-tts-mode") == "custom"
+
+
+def test_piper_model_is_visible_when_installed():
+    if not PIPER_MODEL_DIR.exists():
+        pytest.skip(f"optional Piper model is missing: {PIPER_MODEL_DIR}")
+
+    response = request_json("GET", "/api/v1/models")
+
+    assert response["status"] == 200
+    assert any(
+        item["id"] == "Piper-en_US-lessac-medium" or item.get("family_key") == "piper"
+        for item in response["json"]["data"]
+    )
