@@ -11,7 +11,8 @@
 #
 # START_MODULE_MAP
 #   LOGGER - Module logger for synthesis service events
-#   TTSService - Core synthesis coordinator with inference guard
+#   SynthesisCoordinator - Internal coordinator over planning, family preparation, and guarded generation
+#   TTSService - Public synthesis facade preserving transport-facing command methods
 #   generate_audio - Dispatch synthesis call to the appropriate backend method
 # END_MODULE_MAP
 #
@@ -21,16 +22,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from core.config import CoreSettings
+from core.backends.base import ExecutionRequest
 from core.contracts.commands import (
     CustomVoiceCommand,
     VoiceCloneCommand,
     VoiceDesignCommand,
 )
 from core.contracts.results import GenerationResult
+from core.contracts.synthesis import SynthesisRequest
 from core.errors import AudioArtifactNotFoundError, TTSGenerationError
 from core.infrastructure.audio_io import (
     convert_audio_to_wav_if_needed,
@@ -39,8 +43,10 @@ from core.infrastructure.audio_io import (
     temporary_output_dir,
 )
 from core.infrastructure.concurrency import InferenceGuard
+from core.model_families import PiperFamilyAdapter, Qwen3FamilyAdapter
 from core.models.catalog import ModelSpec
 from core.observability import Timer, get_logger, log_event, operation_scope
+from core.planning import SynthesisPlanner
 from core.services.model_registry import ModelRegistry
 
 
@@ -61,44 +67,283 @@ def generate_audio(*args, **kwargs):
     output_path = Path(kwargs.pop("output_path"))
     text = kwargs.pop("text")
     language = kwargs.pop("language")
-
-    if mode == "custom":
-        backend.synthesize_custom(
-            handle,
+    backend.execute(
+        ExecutionRequest(
+            handle=handle,
             text=text,
             output_dir=output_path,
             language=language,
-            speaker=kwargs.pop("voice"),
-            instruct=kwargs.pop("instruct"),
-            speed=kwargs.pop("speed"),
+            legacy_mode=mode,
+            generation_kwargs=dict(kwargs),
         )
-        return
-
-    if mode == "design":
-        backend.synthesize_design(
-            handle,
-            text=text,
-            output_dir=output_path,
-            language=language,
-            voice_description=kwargs.pop("instruct"),
-        )
-        return
-
-    if mode == "clone":
-        backend.synthesize_clone(
-            handle,
-            text=text,
-            output_dir=output_path,
-            language=language,
-            ref_audio_path=Path(kwargs.pop("ref_audio")),
-            ref_text=kwargs.pop("ref_text", None),
-        )
-        return
-
-    raise TTSGenerationError(
-        f"Unsupported generation mode: {mode}",
-        details={"mode": mode, "backend": handle.backend_key},
     )
+
+
+class SynthesisCoordinator:
+    def __init__(
+        self,
+        registry: ModelRegistry,
+        settings: CoreSettings,
+        inference_guard: InferenceGuard,
+        planner: SynthesisPlanner,
+        family_adapters: dict[str, Any],
+    ):
+        self.registry = registry
+        self.settings = settings
+        self.inference_guard = inference_guard
+        self.planner = planner
+        self._family_adapters = family_adapters
+
+    def _backend_key(self, fallback: str | None = None) -> str | None:
+        backend = getattr(self.registry, "backend", None)
+        if backend is not None:
+            return getattr(backend, "key", fallback)
+        return fallback
+
+    @staticmethod
+    def _handle_backend_key(handle, fallback: str | None = None) -> str | None:
+        return getattr(handle, "backend_key", fallback)
+
+    def synthesize_custom(self, command: CustomVoiceCommand) -> GenerationResult:
+        plan = self.planner.plan_command(command)
+        spec, handle = self.registry.get_model(
+            model_name=plan.model_spec.api_name,
+            mode=plan.legacy_mode,
+        )
+        prepared = self._prepare_execution(plan)
+        return self._run_generation(
+            spec=spec,
+            handle=handle,
+            text=command.text,
+            save_output=command.save_output,
+            generation_kwargs=prepared,
+        )
+
+    def synthesize_design(self, command: VoiceDesignCommand) -> GenerationResult:
+        plan = self.planner.plan_command(command)
+        spec, handle = self.registry.get_model(
+            model_name=plan.model_spec.api_name,
+            mode=plan.legacy_mode,
+        )
+        prepared = self._prepare_execution(plan)
+        return self._run_generation(
+            spec=spec,
+            handle=handle,
+            text=command.text,
+            save_output=command.save_output,
+            generation_kwargs=prepared,
+        )
+
+    def synthesize_clone(self, command: VoiceCloneCommand) -> GenerationResult:
+        plan = self.planner.plan_command(command)
+        spec, handle = self.registry.get_model(
+            model_name=plan.model_spec.api_name,
+            mode=plan.legacy_mode,
+        )
+
+        with temporary_output_dir(prefix="qwen3_tts_clone_input_") as temp_dir:
+            source_audio = temp_dir / command.ref_audio_path.name
+            source_audio.write_bytes(command.ref_audio_path.read_bytes())
+            wav_audio, converted = convert_audio_to_wav_if_needed(
+                source_audio, self.settings
+            )
+            log_event(
+                LOGGER,
+                level=20,
+                event="[TTSService][synthesize_clone][BLOCK_PREPARE_REFERENCE_AUDIO]",
+                message="Reference audio prepared for clone synthesis",
+                model=spec.api_name,
+                mode=spec.mode,
+                source_audio=str(source_audio),
+                prepared_audio=str(wav_audio),
+                converted=converted,
+                backend=self._handle_backend_key(handle, self._backend_key()),
+            )
+            try:
+                prepared_request = SynthesisRequest.from_command(
+                    VoiceCloneCommand(
+                        text=command.text,
+                        model=command.model,
+                        save_output=command.save_output,
+                        language=command.language,
+                        ref_audio_path=wav_audio,
+                        ref_text=command.ref_text,
+                    )
+                )
+                prepared_plan = replace(plan, request=prepared_request)
+                prepared_generation = self._prepare_execution(prepared_plan)
+                result = self._run_generation(
+                    spec=spec,
+                    handle=handle,
+                    text=command.text,
+                    save_output=command.save_output,
+                    generation_kwargs=prepared_generation,
+                )
+                log_event(
+                    LOGGER,
+                    level=20,
+                    event="[TTSService][synthesize_clone][BLOCK_EXECUTE_CLONE]",
+                    message="Clone synthesis finished",
+                    model=result.model,
+                    mode=result.mode,
+                    saved_path=str(result.saved_path) if result.saved_path else None,
+                    backend=result.backend,
+                )
+                return result
+            finally:
+                if converted and wav_audio.exists():
+                    wav_audio.unlink(missing_ok=True)
+
+    def _prepare_execution(self, plan) -> dict[str, Any]:
+        adapter = self._family_adapters.get(plan.family_key)
+        if adapter is None:
+            raise TTSGenerationError(
+                "No family adapter is registered for the execution plan",
+                details={
+                    "family": plan.family_key,
+                    "model": plan.model_spec.api_name,
+                    "capability": plan.request.capability,
+                },
+            )
+        return dict(adapter.prepare_execution(plan).generation_kwargs)
+
+    def _run_generation(
+        self,
+        *,
+        spec: ModelSpec,
+        handle,
+        text: str,
+        save_output: bool,
+        generation_kwargs: dict[str, Any],
+    ) -> GenerationResult:
+        timer = Timer()
+        generation_kwargs = dict(generation_kwargs)
+        language = generation_kwargs.pop("language", "auto")
+        backend = self.registry.backend_for_spec(spec)
+        self.inference_guard.acquire()
+        log_event(
+            LOGGER,
+            level=20,
+            event="[TTSService][_run_generation][BLOCK_ACQUIRE_INFERENCE]",
+            message="Inference slot acquired",
+            model=spec.api_name,
+            mode=spec.mode,
+            save_output=save_output,
+            text_length=len(text),
+            language=language,
+            backend=backend.key,
+        )
+        try:
+            with temporary_output_dir(prefix="qwen3_tts_output_") as output_dir:
+                try:
+                    generate_audio(
+                        backend=backend,
+                        handle=handle,
+                        mode=spec.mode,
+                        text=text,
+                        language=language,
+                        output_path=str(output_dir),
+                        **generation_kwargs,
+                    )
+                    audio = read_generated_wav(output_dir)
+                except AudioArtifactNotFoundError as exc:
+                    log_event(
+                        LOGGER,
+                        level=40,
+                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
+                        message="Generation finished without output artifact",
+                        model=spec.api_name,
+                        mode=spec.mode,
+                        duration_ms=timer.elapsed_ms,
+                        language=language,
+                        error=str(exc),
+                        backend=backend.key,
+                    )
+                    raise TTSGenerationError(
+                        str(exc),
+                        details={
+                            "model": spec.api_name,
+                            "mode": spec.mode,
+                            "failure_kind": "missing_artifact",
+                            "backend": backend.key,
+                        },
+                    ) from exc
+                except TTSGenerationError as exc:
+                    log_event(
+                        LOGGER,
+                        level=40,
+                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
+                        message="Generation failed with controlled error",
+                        model=spec.api_name,
+                        mode=spec.mode,
+                        language=language,
+                        duration_ms=timer.elapsed_ms,
+                        error=str(exc),
+                        backend=backend.key,
+                    )
+                    raise
+                except Exception as exc:  # pragma: no cover
+                    log_event(
+                        LOGGER,
+                        level=40,
+                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
+                        message="Generation failed with unexpected error",
+                        model=spec.api_name,
+                        mode=spec.mode,
+                        language=language,
+                        duration_ms=timer.elapsed_ms,
+                        error=str(exc),
+                        backend=backend.key,
+                    )
+                    raise TTSGenerationError(
+                        str(exc),
+                        details={
+                            "model": spec.api_name,
+                            "mode": spec.mode,
+                            "backend": backend.key,
+                        },
+                    ) from exc
+
+                saved_path = None
+                if save_output:
+                    saved_path = persist_output(
+                        audio, spec.output_subfolder, text, self.settings
+                    )
+
+                result = GenerationResult(
+                    audio=audio,
+                    saved_path=saved_path,
+                    model=spec.api_name,
+                    mode=spec.mode,
+                    backend=backend.key,
+                )
+                log_event(
+                    LOGGER,
+                    level=20,
+                    event="[TTSService][_run_generation][BLOCK_PERSIST_OUTPUT]",
+                    message="Generation completed successfully",
+                    model=result.model,
+                    mode=result.mode,
+                    duration_ms=timer.elapsed_ms,
+                    language=language,
+                    saved_path=str(result.saved_path) if result.saved_path else None,
+                    audio_path=str(result.audio.path),
+                    backend=result.backend,
+                )
+                return result
+        finally:
+            self.inference_guard.release()
+            log_event(
+                LOGGER,
+                level=20,
+                event="[TTSService][_run_generation][BLOCK_RELEASE_INFERENCE]",
+                message="Inference slot released",
+                model=spec.api_name,
+                mode=spec.mode,
+                duration_ms=timer.elapsed_ms,
+                language=language,
+                backend=backend.key,
+            )
 
 
 # START_CONTRACT: TTSService
@@ -118,6 +363,18 @@ class TTSService:
         self.registry = registry
         self.settings = settings
         self.inference_guard = inference_guard or InferenceGuard()
+        self.planner = SynthesisPlanner(registry)
+        self._family_adapters = {
+            "qwen3_tts": Qwen3FamilyAdapter(),
+            "piper": PiperFamilyAdapter(),
+        }
+        self.coordinator = SynthesisCoordinator(
+            registry=registry,
+            settings=settings,
+            inference_guard=self.inference_guard,
+            planner=self.planner,
+            family_adapters=self._family_adapters,
+        )
 
     def _backend_key(self, fallback: str | None = None) -> str | None:
         backend = getattr(self.registry, "backend", None)
@@ -150,21 +407,7 @@ class TTSService:
                 language=command.language,
                 backend=self._backend_key(),
             )
-            spec, handle = self.registry.get_model(
-                model_name=command.model, mode="custom"
-            )
-            result = self._run_generation(
-                spec=spec,
-                handle=handle,
-                text=command.text,
-                save_output=command.save_output,
-                generation_kwargs={
-                    "language": command.language,
-                    "voice": command.speaker,
-                    "instruct": command.instruct,
-                    "speed": command.speed,
-                },
-            )
+            result = self.coordinator.synthesize_custom(command)
             log_event(
                 LOGGER,
                 level=20,
@@ -198,19 +441,7 @@ class TTSService:
                 language=command.language,
                 backend=self._backend_key(),
             )
-            spec, handle = self.registry.get_model(
-                model_name=command.model, mode="design"
-            )
-            result = self._run_generation(
-                spec=spec,
-                handle=handle,
-                text=command.text,
-                save_output=command.save_output,
-                generation_kwargs={
-                    "language": command.language,
-                    "instruct": command.voice_description,
-                },
-            )
+            result = self.coordinator.synthesize_design(command)
             log_event(
                 LOGGER,
                 level=20,
@@ -258,224 +489,13 @@ class TTSService:
                 ref_audio_path=str(command.ref_audio_path),
                 backend=self._backend_key(),
             )
-            spec, handle = self.registry.get_model(
-                model_name=command.model, mode="clone"
-            )
+            result = self.coordinator.synthesize_clone(command)
+            return result
 
-            with temporary_output_dir(prefix="qwen3_tts_clone_input_") as temp_dir:
-                # START_BLOCK_PREPARE_REFERENCE_AUDIO
-                source_audio = temp_dir / command.ref_audio_path.name
-                source_audio.write_bytes(command.ref_audio_path.read_bytes())
-                wav_audio, converted = convert_audio_to_wav_if_needed(
-                    source_audio, self.settings
-                )
-                log_event(
-                    LOGGER,
-                    level=20,
-                    event="[TTSService][synthesize_clone][BLOCK_PREPARE_REFERENCE_AUDIO]",
-                    message="Reference audio prepared for clone synthesis",
-                    model=spec.api_name,
-                    mode=spec.mode,
-                    source_audio=str(source_audio),
-                    prepared_audio=str(wav_audio),
-                    converted=converted,
-                    backend=self._handle_backend_key(handle, self._backend_key()),
-                )
-                # END_BLOCK_PREPARE_REFERENCE_AUDIO
-                try:
-                    # START_BLOCK_EXECUTE_CLONE
-                    result = self._run_generation(
-                        spec=spec,
-                        handle=handle,
-                        text=command.text,
-                        save_output=command.save_output,
-                        generation_kwargs={
-                            "language": command.language,
-                            "ref_audio": str(wav_audio),
-                            "ref_text": command.ref_text or ".",
-                        },
-                    )
-                    log_event(
-                        LOGGER,
-                        level=20,
-                        event="[TTSService][synthesize_clone][BLOCK_EXECUTE_CLONE]",
-                        message="Clone synthesis finished",
-                        model=result.model,
-                        mode=result.mode,
-                        saved_path=str(result.saved_path)
-                        if result.saved_path
-                        else None,
-                        backend=result.backend,
-                    )
-                    return result
-                    # END_BLOCK_EXECUTE_CLONE
-                finally:
-                    # START_BLOCK_CLEANUP_TEMP_FILES
-                    if converted and wav_audio.exists():
-                        wav_audio.unlink(missing_ok=True)
-                    # END_BLOCK_CLEANUP_TEMP_FILES
-
-    # START_CONTRACT: _run_generation
-    #   PURPOSE: Execute the shared guarded generation pipeline for a resolved model handle.
-    #   INPUTS: { spec: ModelSpec - Resolved model specification, handle: object - Loaded backend model handle, text: str - Input text to synthesize, save_output: bool - Whether the generated audio should be persisted, generation_kwargs: dict[str, Any] - Mode-specific backend generation arguments }
-    #   OUTPUTS: { GenerationResult - Generated audio result and persistence metadata }
-    #   SIDE_EFFECTS: Acquires and releases the inference guard, writes temporary output files, emits structured logs, and may persist generated audio
-    #   LINKS: M-TTS-SERVICE
-    # END_CONTRACT: _run_generation
-    def _run_generation(
-        self,
-        *,
-        spec: ModelSpec,
-        handle,
-        text: str,
-        save_output: bool,
-        generation_kwargs: dict[str, Any],
-    ) -> GenerationResult:
-        timer = Timer()
-        generation_kwargs = dict(generation_kwargs)
-        language = generation_kwargs.pop("language", "auto")
-        # START_BLOCK_ACQUIRE_INFERENCE
-        self.inference_guard.acquire()
-        log_event(
-            LOGGER,
-            level=20,
-            event="[TTSService][_run_generation][BLOCK_ACQUIRE_INFERENCE]",
-            message="Inference slot acquired",
-            model=spec.api_name,
-            mode=spec.mode,
-            save_output=save_output,
-            text_length=len(text),
-            language=language,
-            backend=self._handle_backend_key(handle, self._backend_key()),
-        )
-        # END_BLOCK_ACQUIRE_INFERENCE
-        try:
-            with temporary_output_dir(prefix="qwen3_tts_output_") as output_dir:
-                try:
-                    # START_BLOCK_RUN_BACKEND_SYNTHESIS
-                    generate_audio(
-                        backend=getattr(self.registry, "backend", None),
-                        handle=handle,
-                        mode=spec.mode,
-                        text=text,
-                        language=language,
-                        output_path=str(output_dir),
-                        **generation_kwargs,
-                    )
-                    audio = read_generated_wav(output_dir)
-                    # END_BLOCK_RUN_BACKEND_SYNTHESIS
-                except AudioArtifactNotFoundError as exc:
-                    # START_BLOCK_HANDLE_GENERATION_ERRORS
-                    log_event(
-                        LOGGER,
-                        level=40,
-                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
-                        message="Generation finished without output artifact",
-                        model=spec.api_name,
-                        mode=spec.mode,
-                        duration_ms=timer.elapsed_ms,
-                        language=language,
-                        error=str(exc),
-                        backend=self._handle_backend_key(handle, self._backend_key()),
-                    )
-                    raise TTSGenerationError(
-                        str(exc),
-                        details={
-                            "model": spec.api_name,
-                            "mode": spec.mode,
-                            "failure_kind": "missing_artifact",
-                            "backend": self._handle_backend_key(
-                                handle, self._backend_key()
-                            ),
-                        },
-                    ) from exc
-                except TTSGenerationError as exc:
-                    log_event(
-                        LOGGER,
-                        level=40,
-                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
-                        message="Generation failed with controlled error",
-                        model=spec.api_name,
-                        mode=spec.mode,
-                        language=language,
-                        duration_ms=timer.elapsed_ms,
-                        error=str(exc),
-                        backend=self._handle_backend_key(handle, self._backend_key()),
-                    )
-                    raise
-                except Exception as exc:  # pragma: no cover
-                    log_event(
-                        LOGGER,
-                        level=40,
-                        event="[TTSService][_run_generation][BLOCK_HANDLE_GENERATION_ERRORS]",
-                        message="Generation failed with unexpected error",
-                        model=spec.api_name,
-                        mode=spec.mode,
-                        language=language,
-                        duration_ms=timer.elapsed_ms,
-                        error=str(exc),
-                        backend=self._handle_backend_key(handle, self._backend_key()),
-                    )
-                    raise TTSGenerationError(
-                        str(exc),
-                        details={
-                            "model": spec.api_name,
-                            "mode": spec.mode,
-                            "backend": self._handle_backend_key(
-                                handle, self._backend_key()
-                            ),
-                        },
-                    ) from exc
-                    # END_BLOCK_HANDLE_GENERATION_ERRORS
-
-                # START_BLOCK_PERSIST_OUTPUT
-                saved_path = None
-                if save_output:
-                    saved_path = persist_output(
-                        audio, spec.output_subfolder, text, self.settings
-                    )
-
-                result = GenerationResult(
-                    audio=audio,
-                    saved_path=saved_path,
-                    model=spec.api_name,
-                    mode=spec.mode,
-                    backend=self._handle_backend_key(handle, self._backend_key())
-                    or "unknown",
-                )
-                log_event(
-                    LOGGER,
-                    level=20,
-                    event="[TTSService][_run_generation][BLOCK_PERSIST_OUTPUT]",
-                    message="Generation completed successfully",
-                    model=result.model,
-                    mode=result.mode,
-                    duration_ms=timer.elapsed_ms,
-                    language=language,
-                    saved_path=str(result.saved_path) if result.saved_path else None,
-                    audio_path=str(result.audio.path),
-                    backend=result.backend,
-                )
-                return result
-                # END_BLOCK_PERSIST_OUTPUT
-        finally:
-            # START_BLOCK_RELEASE_INFERENCE
-            self.inference_guard.release()
-            log_event(
-                LOGGER,
-                level=20,
-                event="[TTSService][_run_generation][BLOCK_RELEASE_INFERENCE]",
-                message="Inference slot released",
-                model=spec.api_name,
-                mode=spec.mode,
-                duration_ms=timer.elapsed_ms,
-                language=language,
-                backend=self._handle_backend_key(handle, self._backend_key()),
-            )
-            # END_BLOCK_RELEASE_INFERENCE
 
 __all__ = [
     "LOGGER",
+    "SynthesisCoordinator",
     "generate_audio",
     "TTSService",
 ]

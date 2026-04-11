@@ -40,11 +40,18 @@ pytestmark = pytest.mark.unit
 
 
 class StubRegistry:
+    @property
+    def backend(self):
+        return type("BackendStub", (), {"key": "torch"})()
+
     def get_model(self, model_name=None, mode=None):
         spec = next(
             spec for spec in MODEL_SPECS.values() if spec.mode == (mode or "clone")
         )
         return spec, object()
+
+    def backend_for_spec(self, spec):
+        return self.backend
 
 
 class LoggingRegistry(StubRegistry):

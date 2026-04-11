@@ -173,7 +173,7 @@ DEFAULT_METRICS_COLLECTOR = InMemoryMetricsCollector()
 # END_CONTRACT: OperationalMetricsRegistry
 class OperationalMetricsRegistry:
     def __init__(self, collector: MetricsCollector | None = None) -> None:
-        self._collector = collector or DEFAULT_METRICS_COLLECTOR
+        self._collector = collector or InMemoryMetricsCollector()
 
     @property
     def collector(self) -> MetricsCollector:

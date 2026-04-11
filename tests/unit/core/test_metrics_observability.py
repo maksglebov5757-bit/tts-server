@@ -47,6 +47,7 @@ def _write_model_artifacts(model_dir: Path, config: dict) -> None:
         json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     (model_dir / "tokenizer_config.json").write_text("{}\n", encoding="utf-8")
+    (model_dir / "tokenizer.json").write_text("{}\n", encoding="utf-8")
     (model_dir / "vocab.json").write_text("{}\n", encoding="utf-8")
     (model_dir / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
     speech_tokenizer_dir = model_dir / "speech_tokenizer"
@@ -125,7 +126,8 @@ def test_mlx_metrics_collect_cache_hits_misses_and_load_failures(
     _write_model_artifacts(model_dir, _make_nested_qwen3_config())
 
     monkeypatch.setattr(
-        "core.backends.mlx_backend.load_model", lambda path: {"path": path}
+        "core.backends.mlx_backend.load_model",
+        lambda path: type("RuntimeModel", (), {"tokenizer": object()})(),
     )
 
     backend.load_model(spec)

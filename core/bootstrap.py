@@ -35,7 +35,13 @@ from core.application import (
     RateLimiter,
     TTSApplicationService,
 )
-from core.backends import BackendRegistry, MLXBackend, TorchBackend
+from core.backends import (
+    BackendRegistry,
+    MLXBackend,
+    ONNXBackend,
+    QwenFastBackend,
+    TorchBackend,
+)
 from core.config import CoreSettings
 from core.infrastructure import (
     InferenceGuard,
@@ -147,7 +153,13 @@ def build_runtime(settings: CoreSettings) -> CoreRuntime:
     backend_registry = BackendRegistry(
         [
             MLXBackend(settings.mlx_models_dir, metrics=metrics),
+            QwenFastBackend(
+                settings.models_dir,
+                enabled=settings.qwen_fast_enabled,
+                metrics=metrics,
+            ),
             TorchBackend(settings.models_dir, metrics=metrics),
+            ONNXBackend(settings.models_dir, metrics=metrics),
         ],
         requested_backend=settings.backend,
         autoselect=settings.backend_autoselect,
@@ -195,6 +207,7 @@ def build_runtime(settings: CoreSettings) -> CoreRuntime:
         metrics=metrics,
     )
     # END_BLOCK_ASSEMBLE_RUNTIME
+
 
 __all__ = [
     "CoreRuntime",

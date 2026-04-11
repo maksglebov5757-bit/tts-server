@@ -73,6 +73,7 @@ def test_parse_core_settings_from_env_uses_local_job_backend_defaults():
         values["model_manifest_path"]
         == (PROJECT_ROOT / "core" / "models" / "manifest.v1.json").resolve()
     )
+    assert values["qwen_fast_enabled"] is True
     assert values["model_preload_policy"] == "none"
     assert values["model_preload_ids"] == ()
     assert values["rate_limit_enabled"] is False
@@ -92,6 +93,7 @@ def test_parse_core_settings_from_env_reads_explicit_job_backends(tmp_path: Path
             "QWEN_TTS_VOICES_DIR": str(tmp_path / "voices"),
             "QWEN_TTS_UPLOAD_STAGING_DIR": str(tmp_path / "uploads"),
             "QWEN_TTS_MODEL_MANIFEST_PATH": str(manifest_path),
+            "QWEN_TTS_QWEN_FAST_ENABLED": "false",
             "QWEN_TTS_MODEL_PRELOAD_POLICY": "listed",
             "QWEN_TTS_MODEL_PRELOAD_IDS": "model-a, model-b,model-a",
             "QWEN_TTS_JOB_EXECUTION_BACKEND": "future-executor",
@@ -118,6 +120,7 @@ def test_parse_core_settings_from_env_reads_explicit_job_backends(tmp_path: Path
 
     assert values["model_manifest_path"] == manifest_path.resolve()
     assert values["mlx_models_dir"] == (tmp_path / "mlx-models").resolve()
+    assert values["qwen_fast_enabled"] is False
     assert values["model_preload_policy"] == "listed"
     assert values["model_preload_ids"] == ("model-a", "model-b")
     assert values["job_execution_backend"] == "future-executor"
@@ -237,13 +240,14 @@ def test_build_runtime_passes_manifest_path_to_backend_registry(tmp_path: Path):
               "output_subfolder": "CustomVoice",
               "metadata": {"variant": "1.7B"},
               "mode_metadata": {"id": "custom", "label": "Custom Voice", "semantics": "Instruction-guided synthesis with predefined speakers"},
-              "backend_affinity": ["mlx", "torch"],
-              "rollout": {"enabled": true, "stage": "general", "default_preference": 1},
-              "artifact_validation": {
-                "mlx": {"required_rules": [{"name": "config", "any_of": ["config.json"]}]},
-                "torch": {"required_rules": [{"name": "config", "any_of": ["config.json"]}]}
-              }
-            }
+               "backend_affinity": ["mlx", "qwen_fast", "torch"],
+               "rollout": {"enabled": true, "stage": "general", "default_preference": 1},
+               "artifact_validation": {
+                 "mlx": {"required_rules": [{"name": "config", "any_of": ["config.json"]}]},
+                 "torch": {"required_rules": [{"name": "config", "any_of": ["config.json"]}]},
+                 "qwen_fast": {"required_rules": [{"name": "config", "any_of": ["config.json"]}]}
+               }
+             }
           ]
         }
         """.strip(),
@@ -273,6 +277,7 @@ def test_build_runtime_passes_manifest_path_to_backend_registry(tmp_path: Path):
     assert runtime.backend_registry._backends["torch"].models_dir == (
         tmp_path / "models"
     )
+    assert runtime.backend_registry._backends["qwen_fast"].enabled is True
     assert runtime.registry.readiness_report()["preload"]["policy"] == "listed"
     assert runtime.registry.readiness_report()["preload"]["requested_model_ids"] == [
         "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
